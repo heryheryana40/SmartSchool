@@ -1,0 +1,11 @@
+# Clasp (kalau nanti pakai Google clasp CLI)
+.clasp.json
+.clasprc.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
