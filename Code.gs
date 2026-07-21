@@ -422,11 +422,14 @@ function ambilTahunAjaranAktif() {
   var sheet = ss.getSheetByName("Pengaturan");
   if (!sheet) return "2026/2027"; // Fallback aman jika terjadi kendala sheet
   
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
+  // Gunakan getDisplayValues() (bukan getValues()) khusus untuk kolom B,
+  // supaya kalau sel tidak sengaja tersimpan sebagai tanggal/angka oleh Sheets,
+  // yang terbaca tetap TEKS PERSIS SEPERTI YANG TERLIHAT DI LAYAR, bukan hasil toString() dari objek Date/Number.
+  var dataTeks = sheet.getDataRange().getDisplayValues();
+  for (var i = 1; i < dataTeks.length; i++) {
     // Mencocokkan Nama_Setting di Kolom A (indeks 0)
-    if (data[i][0].toString().trim() === "TAHUN_AJARAN_AKTIF") {
-      return data[i][1].toString().trim(); // Mengambil nilai Value di Kolom B (indeks 1)
+    if (dataTeks[i][0].toString().trim() === "TAHUN_AJARAN_AKTIF") {
+      return dataTeks[i][1].toString().trim(); // Mengambil nilai Value di Kolom B (indeks 1), sebagai teks tampilan
     }
   }
   return "2026/2027"; // Fallback jika baris belum ditambahkan
@@ -447,40 +450,113 @@ function simpanPlottingGuruServer(usernameGuru, namaGuru, mataPelajaran, daftarK
     sheet.appendRow(["Tahun Ajaran", "Username Guru", "Nama Guru", "Mata Pelajaran", "Daftar Kelas"]);
   }
   
-  var tahunAktif = ambilTahunAjaranAktif();
+  var tahunAktif = ambilTahunAjaranAktif().toString().trim();
+  var usernameBersih = usernameGuru.toString().trim();
   var dataEksisting = sheet.getDataRange().getValues();
   var indexBarisDitemukan = -1;
   
   // Cari apakah guru ini sudah pernah menyimpan plotting di tahun ajaran aktif ini
   for (var i = 1; i < dataEksisting.length; i++) {
-    if (dataEksisting[i][0].toString().trim() === tahunAktif && 
-        dataEksisting[i][1].toString().trim() === usernameGuru.toString().trim()) {
+    var tahunBaris = dataEksisting[i][0] === "" ? "" : dataEksisting[i][0].toString().trim();
+    var userBaris = dataEksisting[i][1] === "" ? "" : dataEksisting[i][1].toString().trim();
+    if (tahunBaris === tahunAktif && userBaris === usernameBersih) {
       indexBarisDitemukan = i + 1; // Baris spreadsheet (1-indexed)
       break;
     }
   }
   
   if (indexBarisDitemukan > -1) {
-    // Jika sudah ada: Overwrite/Update Mata Pelajaran (Kolom D) dan Daftar Kelas (Kolom E)
-    sheet.getRange(indexBarisDitemukan, 4).setValue(mataPelajaran.trim());
-    sheet.getRange(indexBarisDitemukan, 5).setValue(daftarKelasString.trim());
+    // Jika sudah ada: Overwrite/Update SEKALIGUS kolom Tahun Ajaran (A) untuk menormalkan
+    // baris lama yang mungkin tersimpan sebagai tipe tanggal/angka, bukan teks murni.
+    sheet.getRange(indexBarisDitemukan, 1, 1, 5)
+      .setNumberFormat("@")
+      .setValues([[tahunAktif, usernameBersih, namaGuru.trim(), mataPelajaran.trim(), daftarKelasString.trim()]]);
   } else {
     // Jika belum ada: Tambah baris plotting baru
     sheet.appendRow([
       tahunAktif,
-      usernameGuru.toString().trim(),
+      usernameBersih,
       namaGuru.trim(),
       mataPelajaran.trim(),
       daftarKelasString.trim()
     ]);
+    sheet.getRange(sheet.getLastRow(), 1, 1, 5).setNumberFormat("@");
+  }
+
+  SpreadsheetApp.flush(); // Paksa semua perubahan langsung tertulis, jangan menunggu batch Apps Script selesai
+
+  return {
+    status: "SUCCESS",
+    message: "Pengaturan mengajar Anda untuk Tahun Ajaran " + tahunAktif + " berhasil disimpan!",
+    debug: { modeUpdate: indexBarisDitemukan > -1, barisKe: indexBarisDitemukan }
+  };
+}
+
+/**
+ * FUNGSI DIAGNOSTIK SEMENTARA — boleh dihapus/diabaikan setelah masalah dashboard selesai.
+ * Cara pakai: buka aplikasi web-nya, tekan F12 (Console), lalu jalankan:
+ *   google.script.run.withSuccessHandler(console.log).debugPlottingGuru('guru')
+ * lalu screenshot hasil yang muncul di Console.
+ */
+function debugPlottingGuru(usernameGuru) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Plotting_Guru");
+  var tahunAktif = ambilTahunAjaranAktif();
+  
+  if (!sheet) return { error: "Sheet Plotting_Guru tidak ditemukan", namaSpreadsheetAktif: ss.getName() };
+  
+  var data = sheet.getDataRange().getValues();
+  var dataTeks = sheet.getDataRange().getDisplayValues();
+  var baris = [];
+  for (var i = 1; i < data.length; i++) {
+    baris.push({
+      barisKe: i + 1,
+      tahunBaris_getValues: data[i][0],
+      tahunBaris_getDisplayValues: dataTeks[i][0],
+      tipeData_tahun: typeof data[i][0],
+      userBaris: data[i][1],
+      cocokTahun: dataTeks[i][0].toString().trim() === tahunAktif,
+      cocokUsername: data[i][1].toString().trim() === usernameGuru.toString().trim()
+    });
   }
   
-  return { status: "SUCCESS", message: "Pengaturan mengajar Anda untuk Tahun Ajaran " + tahunAktif + " berhasil disimpan!" };
+  return {
+    namaSpreadsheetAktif: ss.getName(),      // Untuk pastikan script terhubung ke spreadsheet yang benar
+    urlSpreadsheetAktif: ss.getUrl(),
+    tahunAktif_terbaca: tahunAktif,
+    usernameGuru_dicari: usernameGuru,
+    semuaBarisPlottingGuru: baris
+  };
 }
 
 /**
  * Mengambil data mata pelajaran dan daftar kelas yang diampu guru untuk membatasi dropdown presensi
  */
+/**
+ * FUNGSI DIAGNOSTIK SEMENTARA #2 — untuk menelusuri kartu "Status Presensi Hari Ini"
+ */
+function debugStatusPresensiHariIni(usernameGuru) {
+  var hariIniIndex = new Date().getDay();
+  var namaHariIni = NAMA_HARI_INDONESIA[hariIniIndex];
+
+  var jadwalGuru = guruAmbilJadwalMengajar(usernameGuru);
+  var jadwalHariIni = jadwalGuru.filter(function(j) { return j.hari === namaHariIni; });
+  var plotting = ambilKelasAmpoanGuru(usernameGuru);
+  var hasilAkhir = guruAmbilStatusPresensiHariIni(usernameGuru);
+
+  return {
+    usernameGuru_dipakai: usernameGuru,
+    hariIniIndex: hariIniIndex,
+    namaHariIni_terbaca: namaHariIni,
+    jumlahJadwalGuru_total: jadwalGuru.length,
+    jumlahJadwalHariIni: jadwalHariIni.length,
+    plotting_mataPelajaran: plotting.mataPelajaran,
+    plotting_kelasList: plotting.kelasList,
+    HASIL_AKHIR_guruAmbilStatusPresensiHariIni: hasilAkhir,
+    panjangHasilAkhir: hasilAkhir.length
+  };
+}
+
 function ambilKelasAmpoanGuru(usernameGuru) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("Plotting_Guru");
@@ -489,9 +565,16 @@ function ambilKelasAmpoanGuru(usernameGuru) {
   if (!sheet) return { mataPelajaran: "", kelasList: [] };
   
   var data = sheet.getDataRange().getValues();
+  // dataTeks dipakai KHUSUS untuk membaca kolom Tahun Ajaran (kolom A) sebagai teks tampilan,
+  // supaya konsisten dengan ambilTahunAjaranAktif() dan tidak salah baca kalau selnya
+  // ternyata tersimpan sebagai tipe tanggal/angka, bukan teks murni.
+  var dataTeks = sheet.getDataRange().getDisplayValues();
+  
   for (var i = 1; i < data.length; i++) {
-    if (data[i][0].toString().trim() === tahunAktif && 
-        data[i][1].toString().trim() === usernameGuru.toString().trim()) {
+    var tahunBaris = dataTeks[i][0].toString().trim();
+    var userBaris = data[i][1] === "" ? "" : data[i][1].toString().trim();
+    
+    if (tahunBaris === tahunAktif && userBaris === usernameGuru.toString().trim()) {
       
       var mapel = data[i][3].toString();
       var kelasRaw = data[i][4].toString(); // Misal formatnya: "X-1, XI-2"
@@ -1183,91 +1266,332 @@ function ambilRekapKehadiranSiswa(kelasDipilih, bulanFilter) {
  */
 // ==================== MODUL JADWAL MENGAJAR MINGGUAN ====================
 
-function guruSimpanJadwalMengajar(usernameGuru, namaGuru, hari, jamKe, mapel, kelas) {
+var NAMA_HARI_INDONESIA = [
+  "Minggu",
+  "Senin",
+  "Selasa",
+  "Rabu",
+  "Kamis",
+  "Jumat",
+  "Sabtu"
+];
+
+/**
+ * Mengubah nilai Jam Ke menjadi teks.
+ * Nilai lama seperti 7-8 mungkin sudah diubah Google Sheets
+ * menjadi objek Date 8 Juli.
+ */
+function normalisasiJamKeJadwal_(nilaiJam) {
+  if (nilaiJam instanceof Date) {
+    return Utilities.formatDate(
+      nilaiJam,
+      Session.getScriptTimeZone(),
+      "M-d"
+    );
+  }
+
+  if (nilaiJam === null || typeof nilaiJam === "undefined") {
+    return "";
+  }
+
+  return nilaiJam.toString().trim();
+}
+
+
+/**
+ * Menentukan nama hari berdasarkan zona waktu project Apps Script.
+ */
+function ambilNamaHariHariIni_() {
+  var zonaWaktu = Session.getScriptTimeZone();
+
+  var tanggalLokal = Utilities.formatDate(
+    new Date(),
+    zonaWaktu,
+    "yyyy-MM-dd"
+  ).split("-");
+
+  var tahun = Number(tanggalLokal[0]);
+  var bulan = Number(tanggalLokal[1]) - 1;
+  var tanggal = Number(tanggalLokal[2]);
+
+  var indeksHari = new Date(tahun, bulan, tanggal).getDay();
+
+  return NAMA_HARI_INDONESIA[indeksHari];
+}
+
+
+/**
+ * Menyimpan jadwal baru.
+ */
+function guruSimpanJadwalMengajar(
+  usernameGuru,
+  namaGuru,
+  hari,
+  jamKe,
+  mapel,
+  kelas
+) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("Jadwal_Mengajar");
+
   if (!sheet) {
     sheet = ss.insertSheet("Jadwal_Mengajar");
-    sheet.appendRow(["ID", "Guru Username", "Guru Nama", "Hari", "Jam Ke", "Mapel", "Kelas"]);
+    sheet.appendRow([
+      "ID",
+      "Guru Username",
+      "Guru Nama",
+      "Hari",
+      "Jam Ke",
+      "Mapel",
+      "Kelas"
+    ]);
+  }
+
+  var usernameBersih = usernameGuru.toString().trim();
+  var namaBersih = namaGuru.toString().trim();
+  var hariBersih = hari.toString().trim();
+  var jamKeBersih = normalisasiJamKeJadwal_(jamKe);
+  var mapelBersih = mapel ? mapel.toString().trim() : "";
+  var kelasBersih = kelas.toString().trim();
+
+  if (!usernameBersih || !hariBersih || !jamKeBersih || !kelasBersih) {
+    return {
+      status: "ERROR",
+      message: "Hari, jam ke, dan kelas wajib diisi."
+    };
   }
 
   var id = _buatIdUnik("JDW");
-  sheet.appendRow([id, usernameGuru, namaGuru, hari, jamKe, mapel || "", kelas]);
-  return { status: "SUCCESS", message: "Jadwal " + hari + " jam ke-" + jamKe + " (Kelas " + kelas + ") berhasil ditambahkan." };
+  var barisBaru = sheet.getLastRow() + 1;
+
+  // Kolom E dikunci sebagai teks sebelum data dimasukkan.
+  sheet.getRange(barisBaru, 5).setNumberFormat("@");
+
+  sheet.getRange(barisBaru, 1, 1, 7).setValues([[
+    id,
+    usernameBersih,
+    namaBersih,
+    hariBersih,
+    jamKeBersih,
+    mapelBersih,
+    kelasBersih
+  ]]);
+
+  return {
+    status: "SUCCESS",
+    message:
+      "Jadwal " +
+      hariBersih +
+      " jam ke-" +
+      jamKeBersih +
+      " (Kelas " +
+      kelasBersih +
+      ") berhasil ditambahkan."
+  };
 }
 
+
+/**
+ * Mengambil seluruh jadwal guru.
+ * Seluruh nilai dikonversi ke tipe data yang aman dikirim ke frontend.
+ */
 function guruAmbilJadwalMengajar(usernameGuru) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("Jadwal_Mengajar");
-  if (!sheet) return [];
 
+  if (!sheet) {
+    return [];
+  }
+
+  var usernameBersih = usernameGuru.toString().trim();
   var data = sheet.getDataRange().getValues();
   var hasil = [];
+
   for (var i = 1; i < data.length; i++) {
-    if (data[i][1].toString().trim() === usernameGuru.toString().trim()) {
-      hasil.push({ id: data[i][0], hari: data[i][3], jamKe: data[i][4], mapel: data[i][5], kelas: data[i][6] });
+    var usernameBaris = data[i][1]
+      ? data[i][1].toString().trim()
+      : "";
+
+    if (usernameBaris === usernameBersih) {
+      hasil.push({
+        id: data[i][0] ? data[i][0].toString() : "",
+        hari: data[i][3] ? data[i][3].toString().trim() : "",
+        jamKe: normalisasiJamKeJadwal_(data[i][4]),
+        mapel: data[i][5] ? data[i][5].toString().trim() : "",
+        kelas: data[i][6] ? data[i][6].toString().trim() : ""
+      });
     }
   }
+
   return hasil;
 }
 
+
+/**
+ * Menghapus jadwal berdasarkan ID.
+ */
 function guruHapusJadwalMengajar(id) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("Jadwal_Mengajar");
-  if (!sheet) return { status: "ERROR", message: "Data jadwal tidak ditemukan." };
+
+  if (!sheet) {
+    return {
+      status: "ERROR",
+      message: "Data jadwal tidak ditemukan."
+    };
+  }
 
   var data = sheet.getDataRange().getValues();
+  var idBersih = id.toString().trim();
+
   for (var i = data.length - 1; i >= 1; i--) {
-    if (data[i][0].toString().trim() === id.toString().trim()) {
+    if (data[i][0].toString().trim() === idBersih) {
       sheet.deleteRow(i + 1);
-      return { status: "SUCCESS", message: "Jadwal berhasil dihapus." };
+
+      return {
+        status: "SUCCESS",
+        message: "Jadwal berhasil dihapus."
+      };
     }
   }
-  return { status: "ERROR", message: "Jadwal tidak ditemukan." };
+
+  return {
+    status: "ERROR",
+    message: "Jadwal tidak ditemukan."
+  };
 }
 
-// Nama hari dalam Bahasa Indonesia sesuai indeks getDay() JS (0=Minggu, 1=Senin, ...)
-var NAMA_HARI_INDONESIA = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 
+/**
+ * Mengambil status presensi kelas yang dijadwalkan hari ini.
+ */
 function guruAmbilStatusPresensiHariIni(usernameGuru) {
-  var hariIniIndex = new Date().getDay();
-  var namaHariIni = NAMA_HARI_INDONESIA[hariIniIndex];
+  var usernameBersih = usernameGuru.toString().trim();
+  var namaHariIni = ambilNamaHariHariIni_();
 
-  var jadwalGuru = guruAmbilJadwalMengajar(usernameGuru);
-  var jadwalHariIni = jadwalGuru.filter(function(j) { return j.hari === namaHariIni; });
+  var jadwalGuru = guruAmbilJadwalMengajar(usernameBersih);
 
-  var daftarTampil; // { kelas, jamKe, mapel }[]
-  if (jadwalHariIni.length > 0) {
-    // Guru SUDAH mengatur jadwal -> tampilkan HANYA kelas yang terjadwal hari ini
-    daftarTampil = jadwalHariIni.map(function(j) { return { kelas: j.kelas, jamKe: j.jamKe, mapel: j.mapel }; });
-  } else {
-    // Guru BELUM mengatur jadwal sama sekali -> fallback tampilkan semua kelas ampuan (perilaku lama)
-    var plotting = ambilKelasAmpoanGuru(usernameGuru);
+  var jadwalHariIni = jadwalGuru.filter(function(jadwal) {
+    return jadwal.hari.toLowerCase() === namaHariIni.toLowerCase();
+  });
+
+  var daftarTampil = [];
+
+  if (jadwalGuru.length === 0) {
+    // Fallback hanya jika guru benar-benar belum membuat jadwal.
+    var plotting = ambilKelasAmpoanGuru(usernameBersih);
     var kelasList = plotting.kelasList || [];
-    if (kelasList.length === 0) return [];
-    daftarTampil = kelasList.map(function(k) { return { kelas: k, jamKe: "", mapel: "" }; });
+
+    daftarTampil = kelasList.map(function(kelas) {
+      return {
+        kelas: kelas,
+        jamKe: "",
+        mapel: plotting.mataPelajaran || ""
+      };
+    });
+
+  } else if (jadwalHariIni.length === 0) {
+    // Guru mempunyai jadwal, tetapi tidak mengajar hari ini.
+    return [];
+
+  } else {
+    daftarTampil = jadwalHariIni.map(function(jadwal) {
+      return {
+        kelas: jadwal.kelas,
+        jamKe: normalisasiJamKeJadwal_(jadwal.jamKe),
+        mapel: jadwal.mapel
+      };
+    });
   }
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName("Presensi");
-  var tglHariIni = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  var sheetPresensi = ss.getSheetByName("Presensi");
+
+  var tanggalHariIni = Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone(),
+    "yyyy-MM-dd"
+  );
 
   var kelasSudahIsi = {};
-  if (sheet) {
-    var data = sheet.getDataRange().getValues();
-    for (var i = 1; i < data.length; i++) {
-      var tglBaris = data[i][0];
-      var tglString = (tglBaris instanceof Date) ? Utilities.formatDate(tglBaris, Session.getScriptTimeZone(), "yyyy-MM-dd") : tglBaris.toString().trim();
-      if (tglString === tglHariIni) {
-        var kelasBaris = data[i][4] ? data[i][4].toString().trim() : "";
+
+  if (sheetPresensi) {
+    var dataPresensi = sheetPresensi.getDataRange().getValues();
+
+    for (var i = 1; i < dataPresensi.length; i++) {
+      var tanggalBaris = dataPresensi[i][0];
+
+      var tanggalString = tanggalBaris instanceof Date
+        ? Utilities.formatDate(
+            tanggalBaris,
+            Session.getScriptTimeZone(),
+            "yyyy-MM-dd"
+          )
+        : tanggalBaris.toString().trim();
+
+      var kelasBaris = dataPresensi[i][4]
+        ? dataPresensi[i][4].toString().trim()
+        : "";
+
+      var guruBaris = dataPresensi[i][6]
+        ? dataPresensi[i][6].toString()
+        : "";
+
+      // Mencegah presensi guru lain dianggap sebagai presensi guru ini.
+      var milikGuruIni =
+        guruBaris.indexOf("(" + usernameBersih + ")") !== -1;
+
+      if (tanggalString === tanggalHariIni && milikGuruIni) {
         kelasSudahIsi[kelasBaris] = true;
       }
     }
   }
 
-  return daftarTampil.map(function(d) {
-    return { kelas: d.kelas, jamKe: d.jamKe, mapel: d.mapel, sudahPresensi: !!kelasSudahIsi[d.kelas] };
+  return daftarTampil.map(function(dataJadwal) {
+    return {
+      kelas: dataJadwal.kelas,
+      jamKe: normalisasiJamKeJadwal_(dataJadwal.jamKe),
+      mapel: dataJadwal.mapel,
+      sudahPresensi: !!kelasSudahIsi[dataJadwal.kelas]
+    };
   });
+}
+
+
+/**
+ * Jalankan satu kali untuk memperbaiki data Jam Ke lama
+ * yang sudah berubah menjadi tanggal.
+ */
+function perbaikiFormatJamKeJadwalLama() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Jadwal_Mengajar");
+
+  if (!sheet) {
+    return "Sheet Jadwal_Mengajar tidak ditemukan.";
+  }
+
+  var data = sheet.getDataRange().getValues();
+  var jumlahDiperbaiki = 0;
+
+  for (var i = 1; i < data.length; i++) {
+    var nilaiJam = data[i][4];
+
+    if (nilaiJam instanceof Date) {
+      var jamKeTeks = normalisasiJamKeJadwal_(nilaiJam);
+      var selJamKe = sheet.getRange(i + 1, 5);
+
+      selJamKe.setNumberFormat("@");
+      selJamKe.setValue(jamKeTeks);
+
+      jumlahDiperbaiki++;
+    }
+  }
+
+  return (
+    "Selesai. " +
+    jumlahDiperbaiki +
+    " data Jam Ke berhasil diubah menjadi teks."
+  );
 }
 
 // FUNGSI MIGRASI (jalankan SEKALI SAJA dari editor Apps Script jika presensi lama tidak terbaca konsisten, lalu boleh dihapus)
