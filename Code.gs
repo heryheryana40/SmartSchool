@@ -119,7 +119,7 @@ function adminHapusUser(username) {
       return { status: "SUCCESS", message: "User berhasil dihapus." };
     }
   }
-  return { status: "ERROR", message: "User tidak ditemukan." };
+  return { status: "ERROR", message: "User Tidak Ditemukan." };
 }
 
 // ==================== KHUSUS FITUR GURU ====================
