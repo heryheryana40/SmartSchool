@@ -949,7 +949,7 @@ function siswaAmbilMateriKelas(kelasSiswa) {
   for (var i = 1; i < data.length; i++) {
     var kelasBaris = data[i][6].toString().trim();
     var tanggalTampil = data[i][7].toString().trim();
-    if (kelasBaris === kelasSiswa.trim() && tanggalTampil <= tglHariIni) {
+    if (kelasBaris.toUpperCase() === kelasSiswa.toString().trim().toUpperCase() && tanggalTampil <= tglHariIni) {
       hasil.push({
         id: data[i][0], tanggalUpload: data[i][2], guruNama: data[i][4], mapel: data[i][5],
         judul: data[i][8], deskripsi: data[i][9], linkFile: data[i][10], linkYoutube: data[i][11]
@@ -1060,7 +1060,7 @@ function siswaAmbilTugasKelas(kelasSiswa, usernameSiswa) {
   for (var i = 1; i < dataTugas.length; i++) {
     var kelasBaris = dataTugas[i][6].toString().trim();
     var tanggalTampil = dataTugas[i][7].toString().trim();
-    if (kelasBaris !== kelasSiswa.trim() || tanggalTampil > tglHariIni) continue;
+    if (kelasBaris.toUpperCase() !== kelasSiswa.toString().trim().toUpperCase() || tanggalTampil > tglHariIni) continue;
 
     var idBaris = dataTugas[i][0].toString().trim();
     var statusKumpul = "Belum Kumpul";
@@ -1166,7 +1166,7 @@ function guruAmbilPengumpulanTugas(idTugas) {
   for (var u = 1; u < dataUser.length; u++) {
     if (dataUser[u][3].toString().trim() === "Siswa") {
       var kelasSiswa = dataUser[u].length > 4 ? dataUser[u][4].toString().trim() : "";
-      if (kelasSiswa === kelasTarget) {
+      if (kelasSiswa.toUpperCase() === kelasTarget.toString().trim().toUpperCase()) {
         semuaSiswaTarget.push({ username: dataUser[u][0].toString(), nama: dataUser[u][2].toString(), kelas: kelasSiswa });
       }
     }
@@ -2102,7 +2102,7 @@ function guruAmbilRekapNilaiKelas(guruUsername, kelas) {
   var dataUser = sheetUser.getDataRange().getValues();
   var daftarSiswa = [];
   for (var u = 1; u < dataUser.length; u++) {
-    if (dataUser[u][3].toString().trim() === "Siswa" && dataUser[u].length > 4 && dataUser[u][4].toString().trim() === kelas.trim()) {
+    if (dataUser[u][3].toString().trim() === "Siswa" && dataUser[u].length > 4 && dataUser[u][4].toString().trim().toUpperCase() === kelas.toString().trim().toUpperCase()) {
       daftarSiswa.push({ username: dataUser[u][0].toString(), nama: dataUser[u][2].toString() });
     }
   }
@@ -2115,7 +2115,7 @@ function guruAmbilRekapNilaiKelas(guruUsername, kelas) {
 
   for (var t = 1; t < dataTugas.length; t++) {
     if (dataTugas[t][3].toString().trim() !== guruUsername.toString().trim()) continue;
-    if (dataTugas[t][6].toString().trim() !== kelas.trim()) continue;
+    if (dataTugas[t][6].toString().trim().toUpperCase() !== kelas.toString().trim().toUpperCase()) continue;
     if (dataTugas[t][7].toString().trim() > tglHariIni) continue; // Belum tayang, jangan dimasukkan rekap dulu
     daftarTugas.push({ idBaris: dataTugas[t][0].toString().trim(), judul: dataTugas[t][8] });
   }
