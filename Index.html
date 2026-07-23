@@ -389,6 +389,9 @@
         <button onclick="pindahMenuGuru('g-absensi')" id="btn-g-absensi" class="menu-guru-item w-full flex items-center gap-3.5 px-4 py-3 rounded-xl font-semibold text-sm transition text-slate-500 hover:bg-slate-50 hover:text-slate-800 border-l-[3px] border-transparent">
           <i class="fa-solid fa-clipboard-check w-4 text-center"></i> <span class="menu-label">Presensi Siswa</span>
         </button>
+        <button onclick="pindahMenuGuru('g-jurnal')" id="btn-g-jurnal" class="menu-guru-item w-full flex items-center gap-3.5 px-4 py-3 rounded-xl font-semibold text-sm transition text-slate-500 hover:bg-slate-50 hover:text-slate-800 border-l-[3px] border-transparent">
+          <i class="fa-solid fa-book w-4 text-center"></i> <span class="menu-label">Jurnal Mengajar</span>
+        </button>
         <button onclick="pindahMenuGuru('g-tugas')" id="btn-g-tugas" class="menu-guru-item w-full flex items-center gap-3.5 px-4 py-3 rounded-xl font-semibold text-sm transition text-slate-500 hover:bg-slate-50 hover:text-slate-800 border-l-[3px] border-transparent">
           <i class="fa-solid fa-folder-open w-4 text-center"></i> <span class="menu-label">Materi & Tugas</span>
         </button>
@@ -509,6 +512,53 @@
                 </div>
             </div>
 
+          </div>
+        </div>
+
+        <div id="panel-g-jurnal" class="tab-guru-content hidden space-y-4">
+          <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
+            <h3 class="font-bold text-slate-800 mb-4 text-sm uppercase tracking-wider text-indigo-600">Isi Jurnal Mengajar Hari Ini</h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[11px] font-bold text-slate-400 uppercase mb-1">Tanggal:</label>
+                <input type="date" id="jrn-tanggal" class="w-full p-2.5 border rounded-xl text-xs bg-white font-semibold text-slate-700 focus:outline-none focus:border-indigo-500">
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-slate-400 uppercase mb-1">Jam Ke- (contoh: 1-2):</label>
+                <input type="text" id="jrn-jam-ke" placeholder="1-2" class="w-full p-2.5 border rounded-xl text-xs bg-white focus:outline-none focus:border-indigo-500">
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-slate-400 uppercase mb-1">Kelas:</label>
+                <select id="jrn-kelas" class="w-full p-2.5 border rounded-xl text-xs bg-white font-semibold text-slate-700 focus:outline-none focus:border-indigo-500">
+                  <option value="">-- Pilih Kelas --</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-slate-400 uppercase mb-1">Semester:</label>
+                <select id="jrn-semester" class="w-full p-2.5 border rounded-xl text-xs bg-white font-semibold text-slate-700 focus:outline-none focus:border-indigo-500">
+                  <option value="Ganjil">Ganjil</option>
+                  <option value="Genap">Genap</option>
+                </select>
+              </div>
+              <input type="text" id="jrn-materi" placeholder="Materi Pembelajaran (topik/bab hari ini)" class="p-3 border rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-slate-50/50 sm:col-span-2">
+              <textarea id="jrn-tujuan" placeholder="Tujuan/Indikator Belajar..." rows="2" class="p-3 border rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-slate-50/50 sm:col-span-2"></textarea>
+              <input type="text" id="jrn-pencapaian" placeholder="Pencapaian/Hasil (contoh: 85% siswa paham)" class="p-3 border rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-slate-50/50 sm:col-span-2">
+              <input type="text" id="jrn-absensi" placeholder="Absensi Siswa (contoh: Budi (Sakit), Ani (Izin) — kosongkan jika nihil)" class="p-3 border rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-slate-50/50 sm:col-span-2">
+              <textarea id="jrn-refleksi" placeholder="Hambatan & Solusi (Refleksi)..." rows="2" class="p-3 border rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-slate-50/50 sm:col-span-2"></textarea>
+            </div>
+            <button onclick="eksekusiSimpanJurnal()" id="btn-simpan-jurnal" class="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-indigo-200 transition"><i class="fa-solid fa-floppy-disk"></i> Simpan Jurnal</button>
+          </div>
+
+          <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm overflow-x-auto">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-slate-800 text-sm uppercase tracking-wider text-indigo-600">Rekap Jurnal Mengajar</h3>
+              <select id="jrn-filter-kelas-rekap" onchange="muatRekapJurnal()" class="p-2 border border-slate-200 rounded-xl text-xs bg-white font-semibold text-slate-700 focus:outline-none focus:border-indigo-500">
+                <option value="SEMUA">-- Semua Kelas --</option>
+              </select>
+            </div>
+            <div id="area-rekap-jurnal" class="overflow-x-auto">
+              <p class="text-xs text-slate-400 text-center p-5">Memuat jurnal...</p>
+            </div>
           </div>
         </div>
 
@@ -2047,6 +2097,8 @@
         muatDaftarTugasGuru();
       } else if (tab === 'g-rekap') {
         muatFilterKelasRekapGuru();
+      } else if (tab === 'g-jurnal') {
+        muatFormJurnalMengajar();
       }
     };
 
@@ -2324,6 +2376,184 @@
             muatDaftarTugasGuru();
             Swal.fire({ toast: true, position: 'top-end', icon: res.status === "SUCCESS" ? 'success' : 'error', title: res.message, showConfirmButton: false, timer: 2500 });
           }).guruHapusTugas(id);
+        }
+      });
+    }
+
+    // ==================== MODUL JURNAL MENGAJAR (GURU) ====================
+    const _NAMA_HARI_INDO = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', "Jumat", 'Sabtu'];
+    function _formatHariTanggalIndo(tanggalStr) {
+      if (!tanggalStr) return '-';
+      const d = new Date(tanggalStr + 'T00:00:00');
+      if (isNaN(d.getTime())) return tanggalStr;
+      const hari = _NAMA_HARI_INDO[d.getDay()];
+      const tgl = String(d.getDate()).padStart(2, '0');
+      const bln = String(d.getMonth() + 1).padStart(2, '0');
+      return `${hari}, ${tgl}/${bln}/${d.getFullYear()}`;
+    }
+
+    function muatFormJurnalMengajar() {
+      if (!document.getElementById('jrn-tanggal').value) {
+        document.getElementById('jrn-tanggal').value = new Date().toISOString().split('T')[0];
+      }
+      google.script.run.withSuccessHandler(function(plottingGuru) {
+        const kelasList = plottingGuru.kelasList || [];
+        const opsi = kelasList.map(k => `<option value="${k}">${k}</option>`).join('');
+        document.getElementById('jrn-kelas').innerHTML = '<option value="">-- Pilih Kelas --</option>' + opsi;
+        document.getElementById('jrn-filter-kelas-rekap').innerHTML = '<option value="SEMUA">-- Semua Kelas --</option>' + opsi;
+      }).ambilKelasAmpoanGuru(userProfile.username);
+      muatRekapJurnal();
+    }
+
+    function eksekusiSimpanJurnal() {
+      const data = {
+        tanggal: document.getElementById('jrn-tanggal').value,
+        jamKe: document.getElementById('jrn-jam-ke').value.trim(),
+        kelas: document.getElementById('jrn-kelas').value,
+        semester: document.getElementById('jrn-semester').value,
+        materi: document.getElementById('jrn-materi').value.trim(),
+        tujuan: document.getElementById('jrn-tujuan').value.trim(),
+        pencapaian: document.getElementById('jrn-pencapaian').value.trim(),
+        absensi: document.getElementById('jrn-absensi').value.trim(),
+        refleksi: document.getElementById('jrn-refleksi').value.trim()
+      };
+      if (!data.tanggal || !data.kelas || !data.materi) {
+        return Swal.fire({ icon: 'warning', title: 'Data Belum Lengkap', text: 'Tanggal, Kelas, dan Materi Pembelajaran wajib diisi!', confirmButtonColor: '#4f46e5' });
+      }
+      const btn = document.getElementById('btn-simpan-jurnal');
+      btn.disabled = true; btn.innerHTML = '⏳ Menyimpan...';
+      google.script.run.withSuccessHandler(function(res) {
+        btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Simpan Jurnal';
+        if (res.status === 'SUCCESS') {
+          document.getElementById('jrn-jam-ke').value = '';
+          document.getElementById('jrn-materi').value = '';
+          document.getElementById('jrn-tujuan').value = '';
+          document.getElementById('jrn-pencapaian').value = '';
+          document.getElementById('jrn-absensi').value = '';
+          document.getElementById('jrn-refleksi').value = '';
+          muatRekapJurnal();
+          Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: res.message, showConfirmButton: false, timer: 3000 });
+        } else {
+          Swal.fire({ icon: 'error', title: 'Gagal', text: res.message, confirmButtonColor: '#ef4444' });
+        }
+      }).withFailureHandler(function(error) {
+        btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Simpan Jurnal';
+        Swal.fire({ icon: 'error', title: 'Error Server', text: error.message, confirmButtonColor: '#ef4444' });
+      }).guruSimpanJurnalMengajar(userProfile.username, userProfile.nama, _mapelGuruAktif, data);
+    }
+
+    function muatRekapJurnal() {
+      const area = document.getElementById('area-rekap-jurnal');
+      const kelasFilter = document.getElementById('jrn-filter-kelas-rekap') ? document.getElementById('jrn-filter-kelas-rekap').value : 'SEMUA';
+      area.innerHTML = `<p class="text-xs text-slate-400 text-center p-5 animate-pulse"><i class="fa-solid fa-arrows-rotate"></i> Memuat jurnal...</p>`;
+      google.script.run.withSuccessHandler(function(list) {
+        const filtered = (kelasFilter && kelasFilter !== 'SEMUA') ? list.filter(j => j.kelas === kelasFilter) : list;
+        if (!filtered || filtered.length === 0) {
+          area.innerHTML = `<p class="text-xs text-slate-400 text-center p-5">Belum ada jurnal yang tercatat.</p>`;
+          return;
+        }
+        const baris = filtered.map((j, idx) => {
+          try {
+            return `<tr class="border-b border-slate-100 align-top">
+              <td class="p-2 text-center text-slate-400">${idx + 1}</td>
+              <td class="p-2 whitespace-nowrap"><b>${_formatHariTanggalIndo(j.tanggal)}</b></td>
+              <td class="p-2 text-center">${j.jamKe || '-'}</td>
+              <td class="p-2 font-bold">${j.kelas}</td>
+              <td class="p-2">${j.materi}</td>
+              <td class="p-2">${j.pencapaian || '-'}</td>
+              <td class="p-2">${j.absensi || '- (Nihil)'}</td>
+              <td class="p-2">${j.refleksi || '-'}</td>
+              <td class="p-2 text-center whitespace-nowrap">
+                <button onclick='bukaModalEditJurnal(${JSON.stringify(j).replace(/'/g, "&apos;")})' class="text-indigo-600 hover:text-indigo-800 mr-2" title="Edit"><i class="fa-solid fa-pen"></i></button>
+                <button onclick="hapusJurnal('${j.id}')" class="text-red-500 hover:text-red-700" title="Hapus"><i class="fa-solid fa-trash"></i></button>
+              </td>
+            </tr>`;
+          } catch (e) {
+            return `<tr><td colspan="9" class="p-2 text-red-500 text-[11px]">Gagal menampilkan 1 baris jurnal.</td></tr>`;
+          }
+        }).join('');
+
+        area.innerHTML = `
+          <table class="w-full border-collapse text-xs">
+            <thead><tr class="border-b-2 border-slate-200 font-bold text-slate-500 text-left">
+              <th class="p-2 text-center">No</th><th class="p-2">Hari/Tanggal</th><th class="p-2 text-center">Jam Ke-</th><th class="p-2">Kelas</th>
+              <th class="p-2">Materi Pembelajaran</th><th class="p-2">Pencapaian/Hasil</th><th class="p-2">Absensi Siswa</th><th class="p-2">Catatan/Refleksi</th><th class="p-2 text-center">Aksi</th>
+            </tr></thead>
+            <tbody>${baris}</tbody>
+          </table>`;
+      }).withFailureHandler(function(error) {
+        area.innerHTML = `<p class="text-xs text-red-500 text-center p-5"><i class="fa-solid fa-circle-xmark"></i> Gagal memuat: ${error.message}</p>`;
+      }).guruAmbilJurnalMengajar(userProfile.username);
+    }
+
+    function bukaModalEditJurnal(j) {
+      Swal.fire({
+        title: 'Edit Jurnal Mengajar',
+        width: 600,
+        html: `
+          <div class="grid grid-cols-2 gap-2 text-left text-xs">
+            <div>
+              <label class="block font-bold text-slate-400 uppercase text-[10px] mb-1">Tanggal</label>
+              <input type="date" id="edit-jrn-tanggal" class="swal2-input m-0 w-full" value="${j.tanggal}">
+            </div>
+            <div>
+              <label class="block font-bold text-slate-400 uppercase text-[10px] mb-1">Jam Ke-</label>
+              <input type="text" id="edit-jrn-jam-ke" class="swal2-input m-0 w-full" value="${j.jamKe || ''}">
+            </div>
+            <div class="col-span-2">
+              <label class="block font-bold text-slate-400 uppercase text-[10px] mb-1">Materi Pembelajaran</label>
+              <input type="text" id="edit-jrn-materi" class="swal2-input m-0 w-full" value="${String(j.materi || '').replace(/"/g, '&quot;')}">
+            </div>
+            <div class="col-span-2">
+              <label class="block font-bold text-slate-400 uppercase text-[10px] mb-1">Tujuan/Indikator</label>
+              <textarea id="edit-jrn-tujuan" class="swal2-textarea m-0 w-full">${j.tujuan || ''}</textarea>
+            </div>
+            <div class="col-span-2">
+              <label class="block font-bold text-slate-400 uppercase text-[10px] mb-1">Pencapaian/Hasil</label>
+              <input type="text" id="edit-jrn-pencapaian" class="swal2-input m-0 w-full" value="${String(j.pencapaian || '').replace(/"/g, '&quot;')}">
+            </div>
+            <div class="col-span-2">
+              <label class="block font-bold text-slate-400 uppercase text-[10px] mb-1">Absensi Siswa</label>
+              <input type="text" id="edit-jrn-absensi" class="swal2-input m-0 w-full" value="${String(j.absensi || '').replace(/"/g, '&quot;')}">
+            </div>
+            <div class="col-span-2">
+              <label class="block font-bold text-slate-400 uppercase text-[10px] mb-1">Hambatan & Solusi (Refleksi)</label>
+              <textarea id="edit-jrn-refleksi" class="swal2-textarea m-0 w-full">${j.refleksi || ''}</textarea>
+            </div>
+          </div>`,
+        confirmButtonText: 'Simpan Perubahan',
+        confirmButtonColor: '#4f46e5',
+        showCancelButton: true,
+        cancelButtonText: 'Batal',
+        preConfirm: () => ({
+          tanggal: document.getElementById('edit-jrn-tanggal').value,
+          jamKe: document.getElementById('edit-jrn-jam-ke').value.trim(),
+          materi: document.getElementById('edit-jrn-materi').value.trim(),
+          tujuan: document.getElementById('edit-jrn-tujuan').value.trim(),
+          pencapaian: document.getElementById('edit-jrn-pencapaian').value.trim(),
+          absensi: document.getElementById('edit-jrn-absensi').value.trim(),
+          refleksi: document.getElementById('edit-jrn-refleksi').value.trim()
+        })
+      }).then((result) => {
+        if (result.isConfirmed) {
+          google.script.run.withSuccessHandler(function(res) {
+            muatRekapJurnal();
+            Swal.fire({ toast: true, position: 'top-end', icon: res.status === 'SUCCESS' ? 'success' : 'error', title: res.message, showConfirmButton: false, timer: 2500 });
+          }).withFailureHandler(function(error) {
+            Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, confirmButtonColor: '#ef4444' });
+          }).guruUpdateJurnalMengajar(j.id, result.value);
+        }
+      });
+    }
+
+    function hapusJurnal(id) {
+      Swal.fire({ title: 'Hapus Jurnal Ini?', text: 'Data jurnal yang dihapus tidak dapat dikembalikan.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', cancelButtonColor: '#6b7280', confirmButtonText: 'Ya, Hapus', cancelButtonText: 'Batal' })
+      .then((result) => {
+        if (result.isConfirmed) {
+          google.script.run.withSuccessHandler(function(res) {
+            muatRekapJurnal();
+            Swal.fire({ toast: true, position: 'top-end', icon: res.status === 'SUCCESS' ? 'success' : 'error', title: res.message, showConfirmButton: false, timer: 2500 });
+          }).guruHapusJurnalMengajar(id);
         }
       });
     }
@@ -2926,32 +3156,45 @@
     }
 
     function downloadRekapKehadiranPDF(kelasAktif) {
-      if (!_dataRekapKehadiranTerakhir || _dataRekapKehadiranTerakhir.length === 0) {
-        return Swal.fire({ icon: 'warning', title: 'Data Kosong', text: 'Tidak ada data rekap untuk diunduh.', confirmButtonColor: '#4f46e5' });
-      }
+      // PENTING: Selalu ambil ulang data sesuai bulan yang SEDANG dipilih di input saat tombol ini diklik,
+      // supaya PDF tidak pernah memakai data cache lama walau tombol "Terapkan Filter" belum/lupa diklik.
+      const inputBulan = document.getElementById('rekap-bulan-filter');
+      const bulanTerpilih = (inputBulan && inputBulan.value) ? inputBulan.value : "SEMUA";
 
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF();
-      const periode = _bulanRekapAktif === "SEMUA" ? "Semua Periode" : _bulanRekapAktif;
+      Swal.fire({ title: 'Menyiapkan PDF...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+      google.script.run.withSuccessHandler(function(list) {
+        Swal.close();
+        if (!list || list.length === 0) {
+          return Swal.fire({ icon: 'warning', title: 'Data Kosong', text: 'Tidak ada data rekap untuk periode ini.', confirmButtonColor: '#4f46e5' });
+        }
+        _dataRekapKehadiranTerakhir = list;
+        _bulanRekapAktif = bulanTerpilih;
 
-      doc.setFontSize(14);
-      doc.setFont(undefined, 'bold');
-      doc.text('Rekap Kehadiran Siswa', 14, 16);
-      doc.setFontSize(10);
-      doc.setFont(undefined, 'normal');
-      doc.text(`Kelas: ${kelasAktif}   |   Periode: ${periode}`, 14, 23);
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        const periode = bulanTerpilih === "SEMUA" ? "Semua Periode" : bulanTerpilih;
 
-      const bodyRows = _dataRekapKehadiranTerakhir.map(r => [r.nama, r.hadir, r.sakit, r.izin, r.alpa, r.persentaseHadir + '%']);
+        doc.setFontSize(14);
+        doc.setFont(undefined, 'bold');
+        doc.text('Rekap Kehadiran Siswa', 14, 16);
+        doc.setFontSize(10);
+        doc.setFont(undefined, 'normal');
+        doc.text(`Kelas: ${kelasAktif}   |   Periode: ${periode}`, 14, 23);
 
-      doc.autoTable({
-        startY: 28,
-        head: [['Nama Siswa', 'Hadir', 'Sakit', 'Izin', 'Alpa', '% Hadir']],
-        body: bodyRows,
-        styles: { fontSize: 9 },
-        headStyles: { fillColor: [79, 70, 229] }
-      });
+        const bodyRows = list.map(r => [r.nama, r.hadir, r.sakit, r.izin, r.alpa, r.persentaseHadir + '%']);
 
-      doc.save(`rekap_kehadiran_${kelasAktif}_${periode}.pdf`);
+        doc.autoTable({
+          startY: 28,
+          head: [['Nama Siswa', 'Hadir', 'Sakit', 'Izin', 'Alpa', '% Hadir']],
+          body: bodyRows,
+          styles: { fontSize: 9 },
+          headStyles: { fillColor: [79, 70, 229] }
+        });
+
+        doc.save(`rekap_kehadiran_${kelasAktif}_${periode}.pdf`);
+      }).withFailureHandler(function(error) {
+        Swal.fire({ icon: 'error', title: 'Gagal Mengambil Data', text: error.message, confirmButtonColor: '#ef4444' });
+      }).ambilRekapKehadiranSiswa(kelasAktif, bulanTerpilih);
     }
 
     // ==================== MODUL JADWAL MENGAJAR MINGGUAN (GURU) ====================

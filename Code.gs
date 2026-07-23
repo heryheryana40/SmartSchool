@@ -1470,6 +1470,87 @@ function guruBeriNilaiSekelompok(idTugas, idKelompok, nilai, catatan) {
     : { status: "ERROR", message: "Belum ada anggota kelompok yang mengumpulkan tugas." };
 }
 
+// ==================== MODUL JURNAL MENGAJAR (GURU) ====================
+
+var HEADER_JURNAL_MENGAJAR = ["ID", "Guru Username", "Guru Nama", "Tanggal", "Jam Ke", "Kelas", "Semester", "Mapel", "Materi Pembelajaran", "Tujuan Indikator", "Pencapaian Hasil", "Absensi Siswa", "Catatan Refleksi", "Waktu Disimpan"];
+
+function _pastikanSheetJurnalMengajarBenar() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Jurnal_Mengajar");
+  if (!sheet) {
+    sheet = ss.insertSheet("Jurnal_Mengajar");
+    sheet.appendRow(HEADER_JURNAL_MENGAJAR);
+    return sheet;
+  }
+  var headerSaatIni = sheet.getRange(1, 1, 1, HEADER_JURNAL_MENGAJAR.length).getValues()[0];
+  var headerCocok = HEADER_JURNAL_MENGAJAR.every(function(h, idx) { return headerSaatIni[idx] === h; });
+  if (!headerCocok) sheet.getRange(1, 1, 1, HEADER_JURNAL_MENGAJAR.length).setValues([HEADER_JURNAL_MENGAJAR]);
+  return sheet;
+}
+
+/**
+ * Simpan satu entri Jurnal Mengajar baru.
+ * data: { tanggal, jamKe, kelas, semester, materi, tujuan, pencapaian, absensi, refleksi }
+ */
+function guruSimpanJurnalMengajar(guruUsername, guruNama, mapel, data) {
+  var sheet = _pastikanSheetJurnalMengajarBenar();
+  var id = _buatIdUnik("JRN");
+  var waktu = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+
+  sheet.appendRow([id, guruUsername, guruNama, data.tanggal, data.jamKe || "", data.kelas, data.semester || "", mapel || "", data.materi, data.tujuan || "", data.pencapaian || "", data.absensi || "", data.refleksi || "", waktu]);
+  var barisTerakhir = sheet.getLastRow();
+  sheet.getRange(barisTerakhir, 4).setNumberFormat("@").setValue(data.tanggal); // Kunci Tanggal sebagai Teks
+
+  catatLogAktivitas(guruNama, "Isi Jurnal Mengajar", "Mengisi jurnal mengajar kelas " + data.kelas + " (" + data.tanggal + "): " + data.materi);
+  return { status: "SUCCESS", message: "Jurnal mengajar berhasil disimpan." };
+}
+
+/** Daftar jurnal mengajar milik guru, terbaru di atas */
+function guruAmbilJurnalMengajar(guruUsername) {
+  var sheet = _pastikanSheetJurnalMengajarBenar();
+  var data = sheet.getDataRange().getValues();
+  var hasil = [];
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][1].toString().trim() !== guruUsername.toString().trim()) continue;
+    hasil.push({
+      id: data[i][0], tanggal: data[i][3].toString().trim(), jamKe: data[i][4], kelas: data[i][5], semester: data[i][6],
+      mapel: data[i][7], materi: data[i][8], tujuan: data[i][9], pencapaian: data[i][10], absensi: data[i][11], refleksi: data[i][12]
+    });
+  }
+  hasil.sort(function(a, b) { return a.tanggal < b.tanggal ? 1 : (a.tanggal > b.tanggal ? -1 : 0); });
+  return hasil;
+}
+
+function guruUpdateJurnalMengajar(id, data) {
+  var sheet = _pastikanSheetJurnalMengajarBenar();
+  var dataSheet = sheet.getDataRange().getValues();
+  for (var i = 1; i < dataSheet.length; i++) {
+    if (dataSheet[i][0].toString().trim() === id.toString().trim()) {
+      sheet.getRange(i + 1, 4).setNumberFormat("@").setValue(data.tanggal);
+      sheet.getRange(i + 1, 5).setValue(data.jamKe || "");
+      sheet.getRange(i + 1, 9).setValue(data.materi);
+      sheet.getRange(i + 1, 10).setValue(data.tujuan || "");
+      sheet.getRange(i + 1, 11).setValue(data.pencapaian || "");
+      sheet.getRange(i + 1, 12).setValue(data.absensi || "");
+      sheet.getRange(i + 1, 13).setValue(data.refleksi || "");
+      return { status: "SUCCESS", message: "Jurnal berhasil diperbarui." };
+    }
+  }
+  return { status: "ERROR", message: "Data jurnal tidak ditemukan." };
+}
+
+function guruHapusJurnalMengajar(id) {
+  var sheet = _pastikanSheetJurnalMengajarBenar();
+  var data = sheet.getDataRange().getValues();
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (data[i][0].toString().trim() === id.toString().trim()) {
+      sheet.deleteRow(i + 1);
+      return { status: "SUCCESS", message: "Jurnal berhasil dihapus." };
+    }
+  }
+  return { status: "ERROR", message: "Data jurnal tidak ditemukan." };
+}
+
 // ==================== MODUL REKAP KEHADIRAN & INDIKATOR PRESENSI (GURU) ====================
 
 /**
