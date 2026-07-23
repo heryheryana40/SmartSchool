@@ -693,7 +693,7 @@
           <div class="border-t border-slate-100 pt-5">
             <h3 class="font-bold text-xs text-indigo-600 uppercase tracking-wider mb-1">Jadwal Mengajar Mingguan</h3>
             <p class="text-[11px] text-slate-400 mb-3">Atur hari & jam ke berapa Anda mengajar tiap kelas, supaya Dasbor bisa mengingatkan presensi hanya untuk kelas yang benar-benar dijadwalkan hari itu.</p>
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
               <select id="jadwal-hari" class="p-2.5 border rounded-xl text-xs bg-white font-semibold text-slate-700">
                 <option>Senin</option><option>Selasa</option><option>Rabu</option><option>Kamis</option><option>Jumat</option><option>Sabtu</option>
               </select>
@@ -702,6 +702,14 @@
                 <option value="">-- Pilih Kelas --</option>
               </select>
               <button id="btn-tambah-jadwal" onclick="tambahJadwalMengajar()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition">+ Tambah</button>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+              <div class="flex items-center gap-1.5 col-span-2 sm:col-span-2">
+                <input type="time" id="jadwal-jam-mulai" class="p-2.5 border rounded-xl text-xs bg-slate-50/50 w-full">
+                <span class="text-slate-400 text-xs">s/d</span>
+                <input type="time" id="jadwal-jam-selesai" class="p-2.5 border rounded-xl text-xs bg-slate-50/50 w-full">
+              </div>
+              <p class="text-[10px] text-slate-400 col-span-2 sm:col-span-2 self-center"><i class="fa-solid fa-circle-info"></i> Isi manual (opsional). Berguna kalau ada perubahan jam, misal Senin ada upacara jadi jam pertama mundur.</p>
             </div>
             <button id="btn-batal-edit-jadwal" onclick="batalEditJadwal()" class="hidden mb-3 text-[11px] font-bold text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i> Batal edit, kembali ke mode tambah</button>
             <div id="area-list-jadwal-guru" class="space-y-3">
@@ -3072,7 +3080,7 @@
           <div class="p-3.5 rounded-xl border text-center transition hover:shadow-sm ${k.sudahPresensi ? 'bg-emerald-50/60 border-emerald-200' : 'bg-amber-50/60 border-amber-200'}">
             <i class="fa-solid ${k.sudahPresensi ? 'fa-circle-check text-emerald-500' : 'fa-triangle-exclamation text-amber-500'} text-base mb-1"></i>
             <p class="font-black text-sm ${k.sudahPresensi ? 'text-emerald-700' : 'text-amber-700'}">${k.kelas}</p>
-            ${k.jamKe ? `<p class="text-[10px] text-slate-400 font-semibold">Jam ke-${k.jamKe}${k.mapel ? ' • ' + k.mapel : ''}</p>` : ''}
+            ${k.jamKe ? `<p class="text-[10px] text-slate-400 font-semibold">Jam ke-${k.jamKe}${k.jamMulai && k.jamSelesai ? ' (' + k.jamMulai.replace(':', '.') + '-' + k.jamSelesai.replace(':', '.') + ')' : ''}${k.mapel ? ' • ' + k.mapel : ''}</p>` : ''}
             <p class="text-[11px] font-bold mt-1 ${k.sudahPresensi ? 'text-emerald-600' : 'text-amber-600'}">${k.sudahPresensi ? 'Sudah Presensi' : 'Belum Presensi'}</p>
           </div>`).join('');
       }).withFailureHandler(function(error) {
@@ -3239,9 +3247,14 @@
       const jamKe = document.getElementById('jadwal-jam-ke').value.trim();
       const kelas = document.getElementById('jadwal-kelas').value;
       const mapel = document.getElementById('input-mapel-guru').value.trim();
+      const jamMulai = document.getElementById('jadwal-jam-mulai').value;
+      const jamSelesai = document.getElementById('jadwal-jam-selesai').value;
 
       if (!jamKe || !kelas) {
         return Swal.fire({ icon: 'warning', title: 'Data Belum Lengkap', text: 'Jam ke dan Kelas wajib diisi!', confirmButtonColor: '#4f46e5' });
+      }
+      if (jamMulai && jamSelesai && jamMulai >= jamSelesai) {
+        return Swal.fire({ icon: 'warning', title: 'Waktu Tidak Valid', text: 'Jam selesai harus setelah jam mulai.', confirmButtonColor: '#4f46e5' });
       }
 
       const selesai = function(res) {
@@ -3263,11 +3276,11 @@
       if (_idJadwalSedangDiedit) {
         // Mode EDIT: update baris yang sedang diedit
         google.script.run.withSuccessHandler(selesai).withFailureHandler(gagal)
-          .guruEditJadwalMengajar(_idJadwalSedangDiedit, hari, jamKe, mapel, kelas);
+          .guruEditJadwalMengajar(_idJadwalSedangDiedit, hari, jamKe, mapel, kelas, jamMulai, jamSelesai);
       } else {
         // Mode TAMBAH baru
         google.script.run.withSuccessHandler(selesai).withFailureHandler(gagal)
-          .guruSimpanJadwalMengajar(userProfile.username, userProfile.nama, hari, jamKe, mapel, kelas);
+          .guruSimpanJadwalMengajar(userProfile.username, userProfile.nama, hari, jamKe, mapel, kelas, jamMulai, jamSelesai);
       }
     }
 
@@ -3279,6 +3292,8 @@
       document.getElementById('jadwal-hari').value = j.hari;
       document.getElementById('jadwal-jam-ke').value = j.jamKe;
       document.getElementById('jadwal-kelas').value = j.kelas;
+      document.getElementById('jadwal-jam-mulai').value = j.jamMulai || '';
+      document.getElementById('jadwal-jam-selesai').value = j.jamSelesai || '';
       const btn = document.getElementById('btn-tambah-jadwal');
       btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Update';
       btn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
@@ -3292,6 +3307,8 @@
       _idJadwalSedangDiedit = null;
       document.getElementById('jadwal-jam-ke').value = '';
       document.getElementById('jadwal-kelas').value = '';
+      document.getElementById('jadwal-jam-mulai').value = '';
+      document.getElementById('jadwal-jam-selesai').value = '';
       const btn = document.getElementById('btn-tambah-jadwal');
       btn.innerHTML = '+ Tambah';
       btn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
@@ -3319,7 +3336,7 @@
             <div class="space-y-1.5">
               ${jadwalHariIni.map(j => `
                 <div class="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-xs">
-                  <span class="font-bold text-slate-700">Jam ke-${j.jamKe} — Kelas ${j.kelas} ${j.mapel ? '(' + j.mapel + ')' : ''}</span>
+                  <span class="font-bold text-slate-700">Jam ke-${j.jamKe}${j.jamMulai && j.jamSelesai ? ' (' + j.jamMulai.replace(':', '.') + '-' + j.jamSelesai.replace(':', '.') + ')' : ''} — Kelas ${j.kelas} ${j.mapel ? '(' + j.mapel + ')' : ''}</span>
                   <span class="flex items-center gap-3">
                     <button onclick="mulaiEditJadwal('${j.id}')" class="text-indigo-500 hover:text-indigo-700 font-bold"><i class="fa-solid fa-pen"></i></button>
                     <button onclick="hapusJadwalMengajarGuru('${j.id}')" class="text-red-500 hover:text-red-700 font-bold"><i class="fa-solid fa-xmark"></i></button>

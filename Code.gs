@@ -1662,8 +1662,26 @@ function ambilNamaHariHariIni_() {
 }
 
 
+var HEADER_JADWAL_MENGAJAR = ["ID", "Guru Username", "Guru Nama", "Hari", "Jam Ke", "Mapel", "Kelas", "Jam Mulai", "Jam Selesai"];
+
+function _pastikanSheetJadwalMengajarBenar() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Jadwal_Mengajar");
+  if (!sheet) {
+    sheet = ss.insertSheet("Jadwal_Mengajar");
+    sheet.appendRow(HEADER_JADWAL_MENGAJAR);
+    return sheet;
+  }
+  var headerSaatIni = sheet.getRange(1, 1, 1, HEADER_JADWAL_MENGAJAR.length).getValues()[0];
+  if (!headerSaatIni[7]) sheet.getRange(1, 8).setValue("Jam Mulai");
+  if (!headerSaatIni[8]) sheet.getRange(1, 9).setValue("Jam Selesai");
+  return sheet;
+}
+
 /**
  * Menyimpan jadwal baru.
+ * jamMulai/jamSelesai: waktu manual (mis. "07:15"), diisi guru sendiri karena bisa
+ * berubah-ubah (misal Senin ada upacara sehingga jam pertama mundur).
  */
 function guruSimpanJadwalMengajar(
   usernameGuru,
@@ -1671,23 +1689,11 @@ function guruSimpanJadwalMengajar(
   hari,
   jamKe,
   mapel,
-  kelas
+  kelas,
+  jamMulai,
+  jamSelesai
 ) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName("Jadwal_Mengajar");
-
-  if (!sheet) {
-    sheet = ss.insertSheet("Jadwal_Mengajar");
-    sheet.appendRow([
-      "ID",
-      "Guru Username",
-      "Guru Nama",
-      "Hari",
-      "Jam Ke",
-      "Mapel",
-      "Kelas"
-    ]);
-  }
+  var sheet = _pastikanSheetJadwalMengajarBenar();
 
   var usernameBersih = usernameGuru.toString().trim();
   var namaBersih = namaGuru.toString().trim();
@@ -1695,6 +1701,8 @@ function guruSimpanJadwalMengajar(
   var jamKeBersih = normalisasiJamKeJadwal_(jamKe);
   var mapelBersih = mapel ? mapel.toString().trim() : "";
   var kelasBersih = kelas.toString().trim();
+  var jamMulaiBersih = jamMulai ? jamMulai.toString().trim() : "";
+  var jamSelesaiBersih = jamSelesai ? jamSelesai.toString().trim() : "";
 
   if (!usernameBersih || !hariBersih || !jamKeBersih || !kelasBersih) {
     return {
@@ -1706,17 +1714,21 @@ function guruSimpanJadwalMengajar(
   var id = _buatIdUnik("JDW");
   var barisBaru = sheet.getLastRow() + 1;
 
-  // Kolom E dikunci sebagai teks sebelum data dimasukkan.
+  // Kolom E, H, I dikunci sebagai teks sebelum data dimasukkan (agar "07:15" tidak diubah jadi jam Date oleh Sheets).
   sheet.getRange(barisBaru, 5).setNumberFormat("@");
+  sheet.getRange(barisBaru, 8).setNumberFormat("@");
+  sheet.getRange(barisBaru, 9).setNumberFormat("@");
 
-  sheet.getRange(barisBaru, 1, 1, 7).setValues([[
+  sheet.getRange(barisBaru, 1, 1, 9).setValues([[
     id,
     usernameBersih,
     namaBersih,
     hariBersih,
     jamKeBersih,
     mapelBersih,
-    kelasBersih
+    kelasBersih,
+    jamMulaiBersih,
+    jamSelesaiBersih
   ]]);
 
   return {
@@ -1732,19 +1744,47 @@ function guruSimpanJadwalMengajar(
   };
 }
 
+/**
+ * Mengubah (edit) jadwal yang sudah ada berdasarkan ID.
+ */
+function guruEditJadwalMengajar(id, hari, jamKe, mapel, kelas, jamMulai, jamSelesai) {
+  var sheet = _pastikanSheetJadwalMengajarBenar();
+  var data = sheet.getDataRange().getValues();
+  var idBersih = id.toString().trim();
+  var jamKeBersih = normalisasiJamKeJadwal_(jamKe);
+  var kelasBersih = kelas ? kelas.toString().trim() : "";
+  var hariBersih = hari ? hari.toString().trim() : "";
+  var mapelBersih = mapel ? mapel.toString().trim() : "";
+  var jamMulaiBersih = jamMulai ? jamMulai.toString().trim() : "";
+  var jamSelesaiBersih = jamSelesai ? jamSelesai.toString().trim() : "";
+
+  if (!hariBersih || !jamKeBersih || !kelasBersih) {
+    return { status: "ERROR", message: "Hari, jam ke, dan kelas wajib diisi." };
+  }
+
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0].toString().trim() === idBersih) {
+      var baris = i + 1;
+      sheet.getRange(baris, 5).setNumberFormat("@");
+      sheet.getRange(baris, 8).setNumberFormat("@");
+      sheet.getRange(baris, 9).setNumberFormat("@");
+      sheet.getRange(baris, 4, 1, 6).setValues([[hariBersih, jamKeBersih, mapelBersih, kelasBersih, jamMulaiBersih, jamSelesaiBersih]]);
+      return {
+        status: "SUCCESS",
+        message: "Jadwal " + hariBersih + " jam ke-" + jamKeBersih + " (Kelas " + kelasBersih + ") berhasil diperbarui."
+      };
+    }
+  }
+  return { status: "ERROR", message: "Jadwal tidak ditemukan." };
+}
+
 
 /**
  * Mengambil seluruh jadwal guru.
  * Seluruh nilai dikonversi ke tipe data yang aman dikirim ke frontend.
  */
 function guruAmbilJadwalMengajar(usernameGuru) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName("Jadwal_Mengajar");
-
-  if (!sheet) {
-    return [];
-  }
-
+  var sheet = _pastikanSheetJadwalMengajarBenar();
   var usernameBersih = usernameGuru.toString().trim();
   var data = sheet.getDataRange().getValues();
   var hasil = [];
@@ -1760,7 +1800,9 @@ function guruAmbilJadwalMengajar(usernameGuru) {
         hari: data[i][3] ? data[i][3].toString().trim() : "",
         jamKe: normalisasiJamKeJadwal_(data[i][4]),
         mapel: data[i][5] ? data[i][5].toString().trim() : "",
-        kelas: data[i][6] ? data[i][6].toString().trim() : ""
+        kelas: data[i][6] ? data[i][6].toString().trim() : "",
+        jamMulai: data[i][7] ? data[i][7].toString().trim() : "",
+        jamSelesai: data[i][8] ? data[i][8].toString().trim() : ""
       });
     }
   }
@@ -1841,7 +1883,9 @@ function guruAmbilStatusPresensiHariIni(usernameGuru) {
       return {
         kelas: jadwal.kelas,
         jamKe: normalisasiJamKeJadwal_(jadwal.jamKe),
-        mapel: jadwal.mapel
+        mapel: jadwal.mapel,
+        jamMulai: jadwal.jamMulai || "",
+        jamSelesai: jadwal.jamSelesai || ""
       };
     });
   }
@@ -1894,6 +1938,8 @@ function guruAmbilStatusPresensiHariIni(usernameGuru) {
       kelas: dataJadwal.kelas,
       jamKe: normalisasiJamKeJadwal_(dataJadwal.jamKe),
       mapel: dataJadwal.mapel,
+      jamMulai: dataJadwal.jamMulai || "",
+      jamSelesai: dataJadwal.jamSelesai || "",
       sudahPresensi: !!kelasSudahIsi[dataJadwal.kelas]
     };
   });
