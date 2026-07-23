@@ -961,7 +961,7 @@ function siswaAmbilMateriKelas(kelasSiswa) {
 
 // ---------- TUGAS ----------
 
-var HEADER_TUGAS_BENAR = ["ID Baris", "ID Induk", "Tanggal Upload", "Guru Username", "Guru Nama", "Mapel", "Kelas", "Tanggal Tampil", "Judul", "Deskripsi", "Deadline", "Link File Lampiran", "Izinkan Terlambat"];
+var HEADER_TUGAS_BENAR = ["ID Baris", "ID Induk", "Tanggal Upload", "Guru Username", "Guru Nama", "Mapel", "Kelas", "Tanggal Tampil", "Judul", "Deskripsi", "Deadline", "Link File Lampiran", "Izinkan Terlambat", "Jenis Tugas"];
 
 function _pastikanSheetTugasBenar() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -987,14 +987,15 @@ function _pastikanSheetTugasBenar() {
  * kelasTanggalArray: [{kelas: "10-A", tanggalTampil: "2026-07-10"}, ...] — deadline tetap sama untuk semua kelas,
  * tapi TANGGAL TAMPIL (kapan tugas mulai terlihat siswa) bisa berbeda per kelas.
  */
-function guruBuatTugas(guruUsername, guruNama, mapel, kelasTanggalArray, judul, deskripsi, deadline, linkFileLampiran, izinkanTerlambat) {
+function guruBuatTugas(guruUsername, guruNama, mapel, kelasTanggalArray, judul, deskripsi, deadline, linkFileLampiran, izinkanTerlambat, jenisTugas) {
   var sheet = _pastikanSheetTugasBenar();
   var idInduk = _buatIdUnik("TGS");
   var waktu = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+  var jenis = (jenisTugas === "Kelompok") ? "Kelompok" : "Individu";
 
   kelasTanggalArray.forEach(function(kt) {
     var idBaris = _buatIdUnik("TGSROW");
-    sheet.appendRow([idBaris, idInduk, waktu, guruUsername, guruNama, mapel, kt.kelas, kt.tanggalTampil, judul, deskripsi, deadline, linkFileLampiran || "", izinkanTerlambat ? "Ya" : "Tidak"]);
+    sheet.appendRow([idBaris, idInduk, waktu, guruUsername, guruNama, mapel, kt.kelas, kt.tanggalTampil, judul, deskripsi, deadline, linkFileLampiran || "", izinkanTerlambat ? "Ya" : "Tidak", jenis]);
     // PENTING: kunci kolom Tanggal Upload (C), Tanggal Tampil (H), dan Deadline (K) sebagai TEKS,
     // agar Google Sheets tidak otomatis mengonversinya jadi objek Date (yang bikin .replace() error di client)
     var barisTerakhir = sheet.getLastRow();
@@ -1004,9 +1005,9 @@ function guruBuatTugas(guruUsername, guruNama, mapel, kelasTanggalArray, judul, 
   });
 
   var daftarKelasTeks = kelasTanggalArray.map(function(kt) { return kt.kelas + " (tayang " + kt.tanggalTampil + ")"; }).join(", ");
-  catatLogAktivitas(guruNama, "Buat Tugas", "Membuat tugas \"" + judul + "\" untuk: " + daftarKelasTeks + " (deadline: " + deadline + ")");
+  catatLogAktivitas(guruNama, "Buat Tugas", "Membuat tugas " + jenis + " \"" + judul + "\" untuk: " + daftarKelasTeks + " (deadline: " + deadline + ")");
 
-  return { status: "SUCCESS", message: "Tugas \"" + judul + "\" berhasil dibuat untuk " + kelasTanggalArray.length + " kelas." };
+  return { status: "SUCCESS", message: "Tugas \"" + judul + "\" berhasil dibuat untuk " + kelasTanggalArray.length + " kelas.", idInduk: idInduk };
 }
 
 /** Daftar tugas milik guru, dikelompokkan per ID Induk (1 upload = 1 kartu, walau tayang di beberapa kelas) */
@@ -1023,6 +1024,7 @@ function guruAmbilDaftarTugas(guruUsername) {
         idInduk: idInduk, tanggalUpload: data[i][2], mapel: data[i][5],
         judul: data[i][8], deskripsi: data[i][9], deadline: data[i][10],
         linkFileLampiran: data[i][11], izinkanTerlambat: data[i][12],
+        jenisTugas: (data[i][13] || "Individu").toString().trim() || "Individu",
         daftarKelas: []
       };
     }
@@ -1031,17 +1033,182 @@ function guruAmbilDaftarTugas(guruUsername) {
   return Object.values(grup).reverse();
 }
 
+// ---------- KELOMPOK TUGAS ----------
+
+var HEADER_KELOMPOK_TUGAS = ["ID Kelompok", "ID Baris Tugas", "Nama Kelompok", "Anggota", "Metode"];
+
+function _pastikanSheetKelompokTugasBenar() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Kelompok_Tugas");
+  if (!sheet) {
+    sheet = ss.insertSheet("Kelompok_Tugas");
+    sheet.appendRow(HEADER_KELOMPOK_TUGAS);
+    return sheet;
+  }
+  var headerSaatIni = sheet.getRange(1, 1, 1, HEADER_KELOMPOK_TUGAS.length).getValues()[0];
+  var headerCocok = HEADER_KELOMPOK_TUGAS.every(function(h, idx) { return headerSaatIni[idx] === h; });
+  if (!headerCocok) sheet.getRange(1, 1, 1, HEADER_KELOMPOK_TUGAS.length).setValues([HEADER_KELOMPOK_TUGAS]);
+  return sheet;
+}
+
+function _acakArray(arr) {
+  var a = arr.slice();
+  for (var i = a.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+  }
+  return a;
+}
+
+/** Daftar siswa satu kelas berdasarkan ID Baris Tugas (dipakai untuk UI Atur Kelompok manual) */
+function guruAmbilSiswaUntukKelompok(idBarisTugas) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetTugas = _pastikanSheetTugasBenar();
+  var dataTugas = sheetTugas.getDataRange().getValues();
+  var kelasTarget = "";
+  for (var i = 1; i < dataTugas.length; i++) {
+    if (dataTugas[i][0].toString().trim() === idBarisTugas.toString().trim()) { kelasTarget = dataTugas[i][6].toString().trim(); break; }
+  }
+  var sheetUser = ss.getSheetByName("Users");
+  var dataUser = sheetUser.getDataRange().getValues();
+  var siswaKelas = [];
+  for (var u = 1; u < dataUser.length; u++) {
+    if (dataUser[u][3].toString().trim() === "Siswa") {
+      var kelasSiswa = dataUser[u].length > 4 ? dataUser[u][4].toString().trim() : "";
+      if (kelasSiswa.toUpperCase() === kelasTarget.toUpperCase()) {
+        siswaKelas.push({ username: dataUser[u][0].toString(), nama: dataUser[u][2].toString() });
+      }
+    }
+  }
+  return siswaKelas;
+}
+
+/** Hapus semua baris kelompok milik satu baris tugas tertentu (dipakai sebelum menulis ulang) */
+function _hapusKelompokLamaUntukTugas(idBarisTugas) {
+  var sheet = _pastikanSheetKelompokTugasBenar();
+  var data = sheet.getDataRange().getValues();
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (data[i][1].toString().trim() === idBarisTugas.toString().trim()) sheet.deleteRow(i + 1);
+  }
+}
+
+/**
+ * Membuat kelompok secara OTOMATIS untuk satu baris tugas (satu kelas), berdasarkan
+ * jumlah anggota per kelompok yang ditentukan guru. Siswa diacak lalu dibagi rata;
+ * kelompok terakhir boleh berisi lebih sedikit anggota jika jumlah siswa tidak habis dibagi.
+ */
+function guruBuatKelompokOtomatis(idBarisTugas, jumlahAnggotaPerKelompok) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetTugas = _pastikanSheetTugasBenar();
+  var dataTugas = sheetTugas.getDataRange().getValues();
+  var kelasTarget = "";
+  for (var i = 1; i < dataTugas.length; i++) {
+    if (dataTugas[i][0].toString().trim() === idBarisTugas.toString().trim()) { kelasTarget = dataTugas[i][6].toString().trim(); break; }
+  }
+  if (!kelasTarget) return { status: "ERROR", message: "Baris tugas tidak ditemukan." };
+
+  var sheetUser = ss.getSheetByName("Users");
+  var dataUser = sheetUser.getDataRange().getValues();
+  var siswaKelas = [];
+  for (var u = 1; u < dataUser.length; u++) {
+    if (dataUser[u][3].toString().trim() === "Siswa") {
+      var kelasSiswa = dataUser[u].length > 4 ? dataUser[u][4].toString().trim() : "";
+      if (kelasSiswa.toUpperCase() === kelasTarget.toUpperCase()) {
+        siswaKelas.push({ username: dataUser[u][0].toString(), nama: dataUser[u][2].toString() });
+      }
+    }
+  }
+  if (siswaKelas.length === 0) return { status: "ERROR", message: "Tidak ada siswa di kelas ini." };
+
+  var jumlahPer = parseInt(jumlahAnggotaPerKelompok, 10);
+  if (!jumlahPer || jumlahPer < 1) return { status: "ERROR", message: "Jumlah anggota per kelompok tidak valid." };
+
+  var acak = _acakArray(siswaKelas);
+  var kelompokKelompok = [];
+  for (var k = 0; k < acak.length; k += jumlahPer) {
+    kelompokKelompok.push(acak.slice(k, k + jumlahPer));
+  }
+
+  _hapusKelompokLamaUntukTugas(idBarisTugas);
+  var sheet = _pastikanSheetKelompokTugasBenar();
+  kelompokKelompok.forEach(function(anggota, idx) {
+    var idKelompok = _buatIdUnik("KLP");
+    sheet.appendRow([idKelompok, idBarisTugas, "Kelompok " + (idx + 1), JSON.stringify(anggota), "Otomatis"]);
+  });
+
+  return { status: "SUCCESS", message: "Berhasil membuat " + kelompokKelompok.length + " kelompok secara otomatis (" + jumlahPer + " anggota/kelompok)." };
+}
+
+/**
+ * Menyimpan pembagian kelompok secara MANUAL.
+ * daftarKelompok: [{ namaKelompok: "Kelompok A", anggota: [{username, nama}, ...] }, ...]
+ */
+function guruSimpanKelompokManual(idBarisTugas, daftarKelompok) {
+  if (!daftarKelompok || daftarKelompok.length === 0) return { status: "ERROR", message: "Belum ada kelompok yang dibuat." };
+
+  // Validasi: pastikan tidak ada siswa yang masuk lebih dari satu kelompok
+  var sudahDipakai = {};
+  for (var i = 0; i < daftarKelompok.length; i++) {
+    var anggota = daftarKelompok[i].anggota || [];
+    for (var j = 0; j < anggota.length; j++) {
+      var uname = anggota[j].username;
+      if (sudahDipakai[uname]) return { status: "ERROR", message: "Siswa " + (anggota[j].nama || uname) + " sudah masuk ke lebih dari satu kelompok." };
+      sudahDipakai[uname] = true;
+    }
+  }
+
+  _hapusKelompokLamaUntukTugas(idBarisTugas);
+  var sheet = _pastikanSheetKelompokTugasBenar();
+  daftarKelompok.forEach(function(klp) {
+    var idKelompok = _buatIdUnik("KLP");
+    sheet.appendRow([idKelompok, idBarisTugas, klp.namaKelompok || "Kelompok", JSON.stringify(klp.anggota || []), "Manual"]);
+  });
+
+  return { status: "SUCCESS", message: "Berhasil menyimpan " + daftarKelompok.length + " kelompok secara manual." };
+}
+
+/** Ambil daftar kelompok untuk satu baris tugas */
+function guruAmbilKelompokTugas(idBarisTugas) {
+  var sheet = _pastikanSheetKelompokTugasBenar();
+  var data = sheet.getDataRange().getValues();
+  var hasil = [];
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][1].toString().trim() === idBarisTugas.toString().trim()) {
+      var anggota = [];
+      try { anggota = JSON.parse(data[i][3]); } catch (e) { anggota = []; }
+      hasil.push({ idKelompok: data[i][0], namaKelompok: data[i][2], anggota: anggota, metode: data[i][4] });
+    }
+  }
+  return hasil;
+}
+
+/** Cari kelompok milik seorang siswa untuk satu baris tugas tertentu */
+function _cariKelompokSiswa(idBarisTugas, username) {
+  var daftarKelompok = guruAmbilKelompokTugas(idBarisTugas);
+  for (var i = 0; i < daftarKelompok.length; i++) {
+    var anggota = daftarKelompok[i].anggota || [];
+    for (var j = 0; j < anggota.length; j++) {
+      if (anggota[j].username && anggota[j].username.toString().trim() === username.toString().trim()) return daftarKelompok[i];
+    }
+  }
+  return null;
+}
+
 function guruHapusTugas(idInduk) {
   var sheet = _pastikanSheetTugasBenar();
   var data = sheet.getDataRange().getValues();
   var jumlahDihapus = 0;
+  var idBarisTerkait = [];
 
   for (var i = data.length - 1; i >= 1; i--) {
     if (data[i][1].toString().trim() === idInduk.toString().trim()) {
+      idBarisTerkait.push(data[i][0].toString().trim());
       sheet.deleteRow(i + 1);
       jumlahDihapus++;
     }
   }
+  idBarisTerkait.forEach(function(idBaris) { _hapusKelompokLamaUntukTugas(idBaris); });
+
   return jumlahDihapus > 0
     ? { status: "SUCCESS", message: "Tugas berhasil dihapus dari " + jumlahDihapus + " kelas." }
     : { status: "ERROR", message: "Tugas tidak ditemukan." };
@@ -1052,8 +1219,8 @@ function siswaAmbilTugasKelas(kelasSiswa, usernameSiswa) {
   var sheet = _pastikanSheetTugasBenar();
   var dataTugas = sheet.getDataRange().getValues();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheetKumpul = ss.getSheetByName("Pengumpulan_Tugas");
-  var dataKumpul = sheetKumpul ? sheetKumpul.getDataRange().getValues() : [];
+  var sheetKumpul = _pastikanSheetPengumpulanTugasBenar();
+  var dataKumpul = sheetKumpul.getDataRange().getValues();
   var tglHariIni = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
 
   var hasil = [];
@@ -1063,16 +1230,29 @@ function siswaAmbilTugasKelas(kelasSiswa, usernameSiswa) {
     if (kelasBaris.toUpperCase() !== kelasSiswa.toString().trim().toUpperCase() || tanggalTampil > tglHariIni) continue;
 
     var idBaris = dataTugas[i][0].toString().trim();
+    var jenisTugas = (dataTugas[i][13] || "Individu").toString().trim() || "Individu";
     var statusKumpul = "Belum Kumpul";
     var nilai = "";
     var catatanGuru = "";
+    var usernamePengirim = "";
+    var riwayatSubmission = [];
 
     for (var j = 1; j < dataKumpul.length; j++) {
       if (dataKumpul[j][0].toString().trim() === idBaris && dataKumpul[j][1].toString().trim() === usernameSiswa.toString().trim()) {
         statusKumpul = dataKumpul[j][7].toString();
         nilai = dataKumpul[j][8];
         catatanGuru = dataKumpul[j][9];
+        usernamePengirim = dataKumpul[j][11] || "";
+        try { riwayatSubmission = JSON.parse(dataKumpul[j][13] || "[]"); } catch (e) { riwayatSubmission = []; }
         break;
+      }
+    }
+
+    var infoKelompok = null;
+    if (jenisTugas === "Kelompok") {
+      var kelompokSaya = _cariKelompokSiswa(idBaris, usernameSiswa);
+      if (kelompokSaya) {
+        infoKelompok = { idKelompok: kelompokSaya.idKelompok, namaKelompok: kelompokSaya.namaKelompok, anggota: kelompokSaya.anggota };
       }
     }
 
@@ -1080,28 +1260,55 @@ function siswaAmbilTugasKelas(kelasSiswa, usernameSiswa) {
       id: idBaris, tanggalUpload: dataTugas[i][2], guruNama: dataTugas[i][4], mapel: dataTugas[i][5],
       judul: dataTugas[i][8], deskripsi: dataTugas[i][9], deadline: dataTugas[i][10],
       linkFileLampiran: dataTugas[i][11], izinkanTerlambat: dataTugas[i][12],
+      jenisTugas: jenisTugas, kelompok: infoKelompok, usernamePengirim: usernamePengirim,
+      riwayatSubmission: riwayatSubmission,
       statusKumpul: statusKumpul, nilai: nilai, catatanGuru: catatanGuru
     });
   }
   return hasil.reverse();
 }
 
+var HEADER_PENGUMPULAN_TUGAS = ["ID Tugas", "Username Siswa", "Nama Siswa", "Kelas", "Waktu Kumpul", "Jenis Jawaban", "Isi Jawaban", "Status Waktu", "Nilai", "Catatan Guru", "", "Username Pengirim", "Laporan Kontribusi", "Riwayat Submission"];
+
+function _pastikanSheetPengumpulanTugasBenar() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Pengumpulan_Tugas");
+  if (!sheet) {
+    sheet = ss.insertSheet("Pengumpulan_Tugas");
+    sheet.appendRow(["ID Tugas", "Username Siswa", "Nama Siswa", "Kelas", "Waktu Kumpul", "Jenis Jawaban", "Isi Jawaban", "Status Waktu", "Nilai", "Catatan Guru", "ID Kelompok", "Username Pengirim", "Laporan Kontribusi", "Riwayat Submission"]);
+    return sheet;
+  }
+  var headerSaatIni = sheet.getRange(1, 1, 1, 14).getValues()[0];
+  if (!headerSaatIni[10]) sheet.getRange(1, 11).setValue("ID Kelompok");
+  if (!headerSaatIni[11]) sheet.getRange(1, 12).setValue("Username Pengirim");
+  if (!headerSaatIni[12]) sheet.getRange(1, 13).setValue("Laporan Kontribusi");
+  if (!headerSaatIni[13]) sheet.getRange(1, 14).setValue("Riwayat Submission");
+  return sheet;
+}
+
 /**
  * Siswa mengumpulkan tugas (link Google Drive ATAU teks jawaban langsung).
  * idTugas di sini adalah ID BARIS (spesifik per kelas), bukan ID Induk.
- * Bersifat upsert: kalau siswa submit ulang untuk tugas yang sama, jawaban lama ditimpa.
+ * Bersifat upsert: kalau siswa submit ulang untuk tugas yang sama, jawaban lama dipindah ke riwayat
+ * (TIDAK dihapus) supaya nilai yang sudah diberikan guru sebelumnya tetap ada sebagai acuan.
+ *
+ * Untuk tugas KELOMPOK: cukup satu anggota yang submit, tapi baris pengumpulan otomatis
+ * dibuat/diperbarui untuk SEMUA anggota kelompok (agar tiap anak bisa dinilai per-orang).
+ * laporanKontribusi (opsional): [{ username, status: "Ikut"/"Tidak Ikut", catatan }, ...] —
+ * hanya untuk anggota LAIN (bukan diri sendiri), dan hanya tampil ke guru, tidak ke siswa lain.
  */
-function siswaKumpulkanTugas(idTugas, usernameSiswa, namaSiswa, kelasSiswa, jenisJawaban, isiJawaban) {
+function siswaKumpulkanTugas(idTugas, usernameSiswa, namaSiswa, kelasSiswa, jenisJawaban, isiJawaban, laporanKontribusi) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheetTugas = _pastikanSheetTugasBenar();
   var dataTugas = sheetTugas.getDataRange().getValues();
 
-  var deadline = null, izinkanTerlambat = "Tidak", judulTugas = "";
+  var deadline = null, izinkanTerlambat = "Tidak", judulTugas = "", jenisTugas = "Individu";
   for (var i = 1; i < dataTugas.length; i++) {
     if (dataTugas[i][0].toString().trim() === idTugas.toString().trim()) {
       deadline = new Date(dataTugas[i][10]);
       izinkanTerlambat = dataTugas[i][12].toString().trim();
       judulTugas = dataTugas[i][8];
+      jenisTugas = (dataTugas[i][13] || "Individu").toString().trim() || "Individu";
       break;
     }
   }
@@ -1115,32 +1322,55 @@ function siswaKumpulkanTugas(idTugas, usernameSiswa, namaSiswa, kelasSiswa, jeni
     statusWaktu = "Terlambat";
   }
 
-  var sheet = ss.getSheetByName("Pengumpulan_Tugas");
-  if (!sheet) {
-    sheet = ss.insertSheet("Pengumpulan_Tugas");
-    sheet.appendRow(["ID Tugas", "Username Siswa", "Nama Siswa", "Kelas", "Waktu Kumpul", "Jenis Jawaban", "Isi Jawaban", "Status Waktu", "Nilai", "Catatan Guru"]);
+  // Tentukan daftar username yang perlu diberi baris pengumpulan
+  var daftarUsernameTarget = [{ username: usernameSiswa, nama: namaSiswa }];
+  var idKelompok = "";
+  if (jenisTugas === "Kelompok") {
+    var kelompokSaya = _cariKelompokSiswa(idTugas, usernameSiswa);
+    if (!kelompokSaya) return { status: "ERROR", message: "Anda belum terdaftar di kelompok manapun untuk tugas ini. Hubungi guru." };
+    idKelompok = kelompokSaya.idKelompok;
+    daftarUsernameTarget = kelompokSaya.anggota;
   }
 
+  var sheet = _pastikanSheetPengumpulanTugasBenar();
   var waktuKumpul = Utilities.formatDate(sekarang, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
-  var data = sheet.getDataRange().getValues();
+  var petaLaporan = {};
+  (laporanKontribusi || []).forEach(function(l) { petaLaporan[l.username.toString().trim()] = { status: l.status || "", catatan: l.catatan || "" }; });
 
-  for (var k = 1; k < data.length; k++) {
-    if (data[k][0].toString().trim() === idTugas.toString().trim() && data[k][1].toString().trim() === usernameSiswa.toString().trim()) {
-      sheet.getRange(k + 1, 5, 1, 4).setValues([[waktuKumpul, jenisJawaban, isiJawaban, statusWaktu]]);
-      sheet.getRange(k + 1, 5).setNumberFormat("@").setValue(waktuKumpul); // Kunci Waktu Kumpul sebagai Teks
-      sheet.getRange(k + 1, 7).setNumberFormat("@").setValue(isiJawaban); // Kunci Isi Jawaban sebagai Teks
-      return { status: "SUCCESS", message: "Jawaban berhasil diperbarui." + (statusWaktu === "Terlambat" ? " (Ditandai Terlambat)" : "") };
+  daftarUsernameTarget.forEach(function(target) {
+    var data = sheet.getDataRange().getValues();
+    var laporanUntukIni = target.username.toString().trim() === usernameSiswa.toString().trim() ? "" : JSON.stringify(petaLaporan[target.username.toString().trim()] || {});
+    var barisDitemukan = -1;
+    for (var k = 1; k < data.length; k++) {
+      if (data[k][0].toString().trim() === idTugas.toString().trim() && data[k][1].toString().trim() === target.username.toString().trim()) { barisDitemukan = k; break; }
     }
-  }
 
-  sheet.appendRow([idTugas, usernameSiswa, namaSiswa, kelasSiswa, waktuKumpul, jenisJawaban, isiJawaban, statusWaktu, "", ""]);
-  // PENTING: kunci kolom Username Siswa (B), Waktu Kumpul (E), dan Isi Jawaban (G) sebagai TEKS,
-  // agar tidak ada yang otomatis dikonversi Google Sheets jadi Date/Number (penyebab crash saat render di client)
-  var barisTerakhir = sheet.getLastRow();
-  sheet.getRange(barisTerakhir, 2).setNumberFormat("@").setValue(usernameSiswa);
-  sheet.getRange(barisTerakhir, 5).setNumberFormat("@").setValue(waktuKumpul);
-  sheet.getRange(barisTerakhir, 7).setNumberFormat("@").setValue(isiJawaban);
-  return { status: "SUCCESS", message: "Tugas berhasil dikumpulkan." + (statusWaktu === "Terlambat" ? " (Ditandai Terlambat)" : "") };
+    if (barisDitemukan >= 0) {
+      var lama = data[barisDitemukan];
+      var isiLama = lama[6] ? lama[6].toString() : "";
+      var riwayat = [];
+      try { riwayat = JSON.parse(lama[13] || "[]"); } catch (e) { riwayat = []; }
+      if (isiLama) {
+        riwayat.push({ waktuKumpul: lama[4], jenisJawaban: lama[5], isiJawaban: lama[6], statusWaktu: lama[7], nilai: lama[8], catatanGuru: lama[9] });
+      }
+      var baris = barisDitemukan + 1;
+      sheet.getRange(baris, 5, 1, 4).setValues([[waktuKumpul, jenisJawaban, isiJawaban, statusWaktu]]);
+      sheet.getRange(baris, 5).setNumberFormat("@").setValue(waktuKumpul);
+      sheet.getRange(baris, 7).setNumberFormat("@").setValue(isiJawaban);
+      sheet.getRange(baris, 11).setValue(idKelompok);
+      sheet.getRange(baris, 12).setValue(usernameSiswa);
+      if (laporanUntukIni) sheet.getRange(baris, 13).setValue(laporanUntukIni);
+      sheet.getRange(baris, 14).setValue(JSON.stringify(riwayat));
+    } else {
+      sheet.appendRow([idTugas, target.username, target.nama, kelasSiswa, waktuKumpul, jenisJawaban, isiJawaban, statusWaktu, "", "", idKelompok, usernameSiswa, laporanUntukIni, "[]"]);
+      var barisTerakhir = sheet.getLastRow();
+      sheet.getRange(barisTerakhir, 2).setNumberFormat("@").setValue(target.username);
+      sheet.getRange(barisTerakhir, 5).setNumberFormat("@").setValue(waktuKumpul);
+      sheet.getRange(barisTerakhir, 7).setNumberFormat("@").setValue(isiJawaban);
+    }
+  });
+
+  return { status: "SUCCESS", message: "Tugas berhasil dikumpulkan." + (jenisTugas === "Kelompok" ? " (berlaku untuk seluruh anggota kelompok)" : "") + (statusWaktu === "Terlambat" ? " (Ditandai Terlambat)" : "") };
 }
 
 /**
@@ -1153,9 +1383,11 @@ function guruAmbilPengumpulanTugas(idTugas) {
   var dataTugas = sheetTugas.getDataRange().getValues();
 
   var kelasTarget = "";
+  var jenisTugas = "Individu";
   for (var i = 1; i < dataTugas.length; i++) {
     if (dataTugas[i][0].toString().trim() === idTugas.toString().trim()) {
       kelasTarget = dataTugas[i][6].toString().trim();
+      jenisTugas = (dataTugas[i][13] || "Individu").toString().trim() || "Individu";
       break;
     }
   }
@@ -1172,11 +1404,14 @@ function guruAmbilPengumpulanTugas(idTugas) {
     }
   }
 
-  var sheetKumpul = ss.getSheetByName("Pengumpulan_Tugas");
-  var dataKumpul = sheetKumpul ? sheetKumpul.getDataRange().getValues() : [];
+  var sheetKumpul = _pastikanSheetPengumpulanTugasBenar();
+  var dataKumpul = sheetKumpul.getDataRange().getValues();
 
   var hasil = semuaSiswaTarget.map(function(s) {
-    var record = { username: s.username, nama: s.nama, kelas: s.kelas, statusKumpul: "Belum Kumpul", waktuKumpul: "", jenisJawaban: "", isiJawaban: "", nilai: "", catatanGuru: "" };
+    var record = {
+      username: s.username, nama: s.nama, kelas: s.kelas, statusKumpul: "Belum Kumpul", waktuKumpul: "", jenisJawaban: "", isiJawaban: "",
+      nilai: "", catatanGuru: "", idKelompok: "", namaKelompok: "", usernamePengirim: "", laporanKontribusi: null, riwayatSubmission: []
+    };
     for (var j = 1; j < dataKumpul.length; j++) {
       if (dataKumpul[j][0].toString().trim() === idTugas.toString().trim() && dataKumpul[j][1].toString().trim() === s.username.toString().trim()) {
         record.statusKumpul = dataKumpul[j][7];
@@ -1185,20 +1420,30 @@ function guruAmbilPengumpulanTugas(idTugas) {
         record.isiJawaban = dataKumpul[j][6];
         record.nilai = dataKumpul[j][8];
         record.catatanGuru = dataKumpul[j][9];
+        record.idKelompok = dataKumpul[j][10] || "";
+        record.usernamePengirim = dataKumpul[j][11] || "";
+        try { record.laporanKontribusi = dataKumpul[j][12] ? JSON.parse(dataKumpul[j][12]) : null; } catch (e) { record.laporanKontribusi = null; }
+        try { record.riwayatSubmission = dataKumpul[j][13] ? JSON.parse(dataKumpul[j][13]) : []; } catch (e) { record.riwayatSubmission = []; }
         break;
       }
     }
     return record;
   });
 
-  return hasil;
+  // Jika tugas kelompok, sertakan nama kelompok masing-masing siswa & susun juga versi terkelompok untuk tampilan guru
+  var kelompokList = [];
+  if (jenisTugas === "Kelompok") {
+    kelompokList = guruAmbilKelompokTugas(idTugas);
+    var petaNamaKelompok = {};
+    kelompokList.forEach(function(klp) { petaNamaKelompok[klp.idKelompok] = klp.namaKelompok; });
+    hasil.forEach(function(r) { if (r.idKelompok) r.namaKelompok = petaNamaKelompok[r.idKelompok] || ""; });
+  }
+
+  return { jenisTugas: jenisTugas, daftarSiswa: hasil, daftarKelompok: kelompokList };
 }
 
 function guruBeriNilaiTugas(idTugas, usernameSiswa, nilai, catatan) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName("Pengumpulan_Tugas");
-  if (!sheet) return { status: "ERROR", message: "Belum ada data pengumpulan untuk tugas ini." };
-
+  var sheet = _pastikanSheetPengumpulanTugasBenar();
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     if (data[i][0].toString().trim() === idTugas.toString().trim() && data[i][1].toString().trim() === usernameSiswa.toString().trim()) {
@@ -1207,6 +1452,22 @@ function guruBeriNilaiTugas(idTugas, usernameSiswa, nilai, catatan) {
     }
   }
   return { status: "ERROR", message: "Siswa ini belum mengumpulkan tugas, tidak bisa diberi nilai." };
+}
+
+/** Beri nilai yang SAMA untuk seluruh anggota satu kelompok sekaligus (mode cepat, default untuk tugas kelompok) */
+function guruBeriNilaiSekelompok(idTugas, idKelompok, nilai, catatan) {
+  var sheet = _pastikanSheetPengumpulanTugasBenar();
+  var data = sheet.getDataRange().getValues();
+  var jumlah = 0;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0].toString().trim() === idTugas.toString().trim() && data[i][10].toString().trim() === idKelompok.toString().trim()) {
+      sheet.getRange(i + 1, 9, 1, 2).setValues([[nilai, catatan || ""]]);
+      jumlah++;
+    }
+  }
+  return jumlah > 0
+    ? { status: "SUCCESS", message: "Nilai " + nilai + " berhasil diberikan ke " + jumlah + " anggota kelompok." }
+    : { status: "ERROR", message: "Belum ada anggota kelompok yang mengumpulkan tugas." };
 }
 
 // ==================== MODUL REKAP KEHADIRAN & INDIKATOR PRESENSI (GURU) ====================
@@ -1925,9 +2186,9 @@ function guruAmbilDetailTugas(idInduk) {
   for (var i = 1; i < data.length; i++) {
     if (data[i][1].toString().trim() === idInduk.toString().trim()) {
       if (!detail) {
-        detail = { idInduk: idInduk, mapel: data[i][5], judul: data[i][8], deskripsi: data[i][9], deadline: data[i][10], linkFileLampiran: data[i][11], izinkanTerlambat: data[i][12] };
+        detail = { idInduk: idInduk, mapel: data[i][5], judul: data[i][8], deskripsi: data[i][9], deadline: data[i][10], linkFileLampiran: data[i][11], izinkanTerlambat: data[i][12], jenisTugas: (data[i][13] || "Individu").toString().trim() || "Individu" };
       }
-      daftarKelas.push({ kelas: data[i][6], tanggalTampil: data[i][7] });
+      daftarKelas.push({ idBaris: data[i][0], kelas: data[i][6], tanggalTampil: data[i][7] });
     }
   }
   if (!detail) return { status: "ERROR", message: "Tugas tidak ditemukan." };
@@ -1939,12 +2200,13 @@ function guruAmbilDetailTugas(idInduk) {
 function guruUpdateTugas(idInduk, judul, deskripsi, deadline, linkFileLampiran, izinkanTerlambat, kelasTanggalArrayBaru) {
   var sheet = _pastikanSheetTugasBenar();
   var data = sheet.getDataRange().getValues();
-  var guruUsername = "", guruNama = "", mapel = "";
+  var guruUsername = "", guruNama = "", mapel = "", jenisTugas = "Individu";
   var kelasSudahAda = {};
 
   for (var i = 1; i < data.length; i++) {
     if (data[i][1].toString().trim() === idInduk.toString().trim()) {
       guruUsername = data[i][3]; guruNama = data[i][4]; mapel = data[i][5];
+      jenisTugas = (data[i][13] || "Individu").toString().trim() || "Individu";
       sheet.getRange(i + 1, 9).setValue(judul);
       sheet.getRange(i + 1, 10).setValue(deskripsi);
       sheet.getRange(i + 1, 11).setNumberFormat("@").setValue(deadline);
@@ -1963,7 +2225,7 @@ function guruUpdateTugas(idInduk, judul, deskripsi, deadline, linkFileLampiran, 
       sheet.getRange(kelasSudahAda[kt.kelas], 8).setNumberFormat("@").setValue(kt.tanggalTampil);
     } else {
       var idBaris = _buatIdUnik("TGSROW");
-      sheet.appendRow([idBaris, idInduk, waktu, guruUsername, guruNama, mapel, kt.kelas, kt.tanggalTampil, judul, deskripsi, deadline, linkFileLampiran || "", izinkanTerlambat ? "Ya" : "Tidak"]);
+      sheet.appendRow([idBaris, idInduk, waktu, guruUsername, guruNama, mapel, kt.kelas, kt.tanggalTampil, judul, deskripsi, deadline, linkFileLampiran || "", izinkanTerlambat ? "Ya" : "Tidak", jenisTugas]);
       var barisTerakhir = sheet.getLastRow();
       sheet.getRange(barisTerakhir, 3).setNumberFormat("@").setValue(waktu);
       sheet.getRange(barisTerakhir, 8).setNumberFormat("@").setValue(kt.tanggalTampil);

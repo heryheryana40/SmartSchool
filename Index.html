@@ -556,6 +556,18 @@
                   <i class="fa-solid fa-wand-magic-sparkles"></i> Bantu Tulis dengan AI
                 </button>
                 <div class="sm:col-span-2">
+                  <label class="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">Jenis Tugas:</label>
+                  <div class="flex gap-4">
+                    <label class="flex items-center gap-2 text-xs font-bold text-slate-600">
+                      <input type="radio" name="tgs-jenis" id="tgs-jenis-individu" value="Individu" checked class="w-4 h-4 accent-indigo-600"> Individu
+                    </label>
+                    <label class="flex items-center gap-2 text-xs font-bold text-slate-600">
+                      <input type="radio" name="tgs-jenis" id="tgs-jenis-kelompok" value="Kelompok" class="w-4 h-4 accent-indigo-600"> Kelompok
+                    </label>
+                  </div>
+                  <p class="text-[10px] text-slate-400 mt-1"><i class="fa-solid fa-circle-info"></i> Untuk tugas kelompok, pembagian anggota diatur setelah tugas dibuat (menu "Atur Kelompok" pada daftar tugas).</p>
+                </div>
+                <div class="sm:col-span-2">
                   <label class="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">Kelas Tujuan (boleh pilih lebih dari satu):</label>
                   <div id="tgs-kelas-tujuan" class="space-y-1.5"><p class="text-xs text-slate-400">Memuat kelas ampuan...</p></div>
                 </div>
@@ -2202,6 +2214,7 @@
       const deskripsi = document.getElementById('tgs-deskripsi').value.trim();
       const deadline = document.getElementById('tgs-deadline').value;
       const izinkanTerlambat = document.getElementById('tgs-izinkan-terlambat').checked;
+      const jenisTugas = document.getElementById('tgs-jenis-kelompok').checked ? 'Kelompok' : 'Individu';
       const fileInput = document.getElementById('tgs-file-input');
       const kelasTerpilih = ambilKelasTanggalTerpilih('chk-kelas-tugas', 'tgl-tampil-tugas');
 
@@ -2220,17 +2233,22 @@
             document.getElementById('tgs-deskripsi').value = '';
             document.getElementById('tgs-deadline').value = '';
             document.getElementById('tgs-izinkan-terlambat').checked = false;
+            document.getElementById('tgs-jenis-individu').checked = true;
             fileInput.value = '';
             muatFormMateriTugasGuru();
             muatDaftarTugasGuru();
-            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: res.message, showConfirmButton: false, timer: 3000 });
+            if (jenisTugas === 'Kelompok') {
+              Swal.fire({ icon: 'success', title: res.message, text: 'Tugas kelompok berhasil dibuat. Selanjutnya atur pembagian anggota kelompok lewat tombol "Atur Kelompok" pada daftar tugas di bawah.', confirmButtonColor: '#4f46e5' });
+            } else {
+              Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: res.message, showConfirmButton: false, timer: 3000 });
+            }
           } else {
             Swal.fire({ icon: 'error', title: 'Gagal', text: res.message, confirmButtonColor: '#ef4444' });
           }
         }).withFailureHandler(function(error) {
           btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-thumbtack"></i> Buat Tugas';
           Swal.fire({ icon: 'error', title: 'Error Server', text: error.message, confirmButtonColor: '#ef4444' });
-        }).guruBuatTugas(userProfile.username, userProfile.nama, _mapelGuruAktif, kelasTerpilih, judul, deskripsi, deadline, linkFile, izinkanTerlambat);
+        }).guruBuatTugas(userProfile.username, userProfile.nama, _mapelGuruAktif, kelasTerpilih, judul, deskripsi, deadline, linkFile, izinkanTerlambat, jenisTugas);
       };
 
       if (fileInput.files[0]) {
@@ -2271,7 +2289,7 @@
           <div class="p-3 bg-slate-50 border border-slate-100 rounded-xl">
             <div class="flex items-center justify-between">
               <div class="min-w-0">
-                <p class="font-bold text-sm text-slate-800 truncate">${t.judul}</p>
+                <p class="font-bold text-sm text-slate-800 truncate">${t.judul} ${t.jenisTugas === 'Kelompok' ? '<span class="ml-1 text-[10px] font-bold bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full align-middle"><i class="fa-solid fa-people-group"></i> Kelompok</span>' : ''}</p>
                 <p class="text-[11px] text-slate-400">${t.mapel ? t.mapel + ' • ' : ''}Deadline: ${String(t.deadline).replace('T', ' ')} ${t.izinkanTerlambat === 'Ya' ? '• <span class="text-amber-600">Boleh Telat</span>' : ''}</p>
               </div>
               <div class="flex gap-2 shrink-0 ml-2">
@@ -2287,6 +2305,7 @@
                   </span>
                   <div class="flex gap-1 shrink-0">
                     <button onclick="editJadwalTugas('${k.idBaris}', '${k.kelas}', '${k.tanggalTampil}', '${t.deadline}')" class="text-slate-500 hover:text-slate-700 font-bold bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded-lg transition" title="Ubah Tanggal Tampil & Deadline"><i class="fa-solid fa-pen"></i> Jadwal</button>
+                    ${t.jenisTugas === 'Kelompok' ? `<button onclick="bukaModalAturKelompok('${k.idBaris}', '${k.kelas}', '${t.judul.replace(/'/g, "\\'")}')" class="text-violet-600 hover:text-violet-800 font-bold bg-violet-50 hover:bg-violet-100 px-2 py-1 rounded-lg transition"><i class="fa-solid fa-people-group"></i> Atur Kelompok</button>` : ''}
                     <button onclick="bukaModalPengumpulanTugas('${k.idBaris}', '${t.judul.replace(/'/g, "\\'")} — ${k.kelas}')" class="text-indigo-600 hover:text-indigo-800 font-bold bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-lg transition"><i class="fa-solid fa-eye"></i> Pengumpulan</button>
                   </div>
                 </div>`).join('')}
@@ -2365,26 +2384,62 @@
 
     function bukaModalPengumpulanTugas(idTugas, judulTugas) {
       Swal.fire({ title: 'Memuat data pengumpulan...', allowOutsideClick: false, didOpen: () => { Swal.showLoading() } });
-      google.script.run.withSuccessHandler(function(list) {
-        let htmlBaris = list.map(s => `
-          <tr class="border-b border-slate-100">
+      google.script.run.withSuccessHandler(function(res) {
+        const list = res.daftarSiswa || [];
+        const isKelompok = res.jenisTugas === 'Kelompok';
+
+        function baris(s) {
+          try {
+          const laporan = s.laporanKontribusi;
+          const tidakIkut = laporan && laporan.status === 'Tidak Ikut';
+          const riwayat = Array.isArray(s.riwayatSubmission) ? s.riwayatSubmission : [];
+          const punyaRiwayat = riwayat.length > 0;
+          return `
+          <tr class="border-b border-slate-100 ${tidakIkut ? 'bg-red-50/60' : ''}">
             <td class="p-2 text-left">
-              <p class="font-bold">${s.nama}</p>
-              <p class="text-slate-400">${s.username}</p>
+              <p class="font-bold">${s.nama} ${tidakIkut ? '<span title="Dilaporkan tidak ikut mengerjakan" class="text-red-500"><i class="fa-solid fa-triangle-exclamation"></i></span>' : ''}</p>
+              <p class="text-slate-400">${s.username}${s.usernamePengirim && s.usernamePengirim === s.username ? ' <span class="text-indigo-500 font-bold">(Pengirim)</span>' : ''}</p>
+              ${tidakIkut ? `<p class="text-[10px] text-red-500 mt-0.5">Laporan: tidak ikut mengerjakan${laporan.catatan ? ' — ' + laporan.catatan : ''}</p>` : ''}
             </td>
             <td class="p-2 text-left">
               ${s.statusKumpul === 'Belum Kumpul' ? '<span class="text-slate-400 font-bold">Belum Kumpul</span>' :
                 s.statusKumpul === 'Terlambat' ? '<span class="text-amber-600 font-bold">Terlambat</span>' : '<span class="text-emerald-600 font-bold">Tepat Waktu</span>'}
               ${s.isiJawaban ? `<br><a href="${s.jenisJawaban === 'Link Drive' ? s.isiJawaban : '#'}" target="_blank" class="text-indigo-600 hover:underline">${s.jenisJawaban === 'Link Drive' ? '<i class="fa-solid fa-paperclip"></i> Buka Link' : '<i class="fa-solid fa-file-pen"></i> ' + String(s.isiJawaban).substring(0, 40) + (String(s.isiJawaban).length > 40 ? '...' : '')}</a>` : ''}
+              ${punyaRiwayat ? `<br><button type="button" onclick='lihatRiwayatSubmisiTugas(${JSON.stringify(riwayat).replace(/'/g, "&apos;")})' class="text-[10px] text-slate-500 hover:text-slate-700 underline mt-0.5"><i class="fa-solid fa-clock-rotate-left"></i> Ada revisi, lihat riwayat & nilai sebelumnya</button>` : ''}
             </td>
             <td class="p-2 text-center">
               <input type="number" class="input-nilai-tugas w-16 p-1.5 border rounded-lg text-center" data-username="${s.username}" value="${s.nilai || ''}" placeholder="-" ${s.statusKumpul === 'Belum Kumpul' ? 'disabled' : ''}>
             </td>
-          </tr>`).join('');
+          </tr>`;
+          } catch (errBaris) {
+            console.error('Gagal render baris siswa:', s, errBaris);
+            return `<tr><td colspan="3" class="p-2 text-red-500 text-[11px]">Gagal menampilkan data siswa ${(s && s.nama) || '?'}.</td></tr>`;
+          }
+        }
+
+        let htmlBaris;
+        if (isKelompok) {
+          const grup = {};
+          list.forEach(s => { const key = s.idKelompok || '(belum masuk kelompok)'; (grup[key] = grup[key] || []).push(s); });
+          htmlBaris = Object.keys(grup).map(key => {
+            const anggota = grup[key];
+            const namaKelompok = anggota[0].namaKelompok || (key === '(belum masuk kelompok)' ? 'Belum masuk kelompok' : key);
+            const adaYangKumpul = anggota.some(a => a.statusKumpul !== 'Belum Kumpul');
+            return `
+              <tr class="bg-violet-50">
+                <td colspan="3" class="p-2 font-bold text-violet-700 text-[11px]">
+                  <i class="fa-solid fa-people-group"></i> ${namaKelompok}
+                  ${adaYangKumpul && key !== '(belum masuk kelompok)' ? `<button type="button" onclick="samakanNilaiKelompok('${idTugas}', '${key}')" class="ml-2 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-white px-2 py-0.5 rounded-lg border border-indigo-200"><i class="fa-solid fa-scale-balanced"></i> Beri Nilai Sama Sekelompok</button>` : ''}
+                </td>
+              </tr>` + anggota.map(baris).join('');
+          }).join('');
+        } else {
+          htmlBaris = list.map(baris).join('');
+        }
 
         Swal.fire({
           title: judulTugas,
-          width: 650,
+          width: 700,
           html: `
             <div class="max-h-96 overflow-y-auto text-xs">
               <table class="w-full border-collapse">
@@ -2424,6 +2479,148 @@
       }).withFailureHandler(function(error) {
         Swal.fire({ icon: 'error', title: 'Gagal Memuat Data', text: error.message, confirmButtonColor: '#ef4444' });
       }).guruAmbilPengumpulanTugas(idTugas);
+    }
+
+    function samakanNilaiKelompok(idTugas, idKelompok) {
+      Swal.fire({
+        title: 'Beri Nilai Sama Sekelompok',
+        html: `<input type="number" id="nilai-sekelompok" class="swal2-input" placeholder="Nilai (0-100)">`,
+        confirmButtonText: 'Terapkan ke Semua Anggota',
+        confirmButtonColor: '#4f46e5',
+        showCancelButton: true,
+        cancelButtonText: 'Batal',
+        preConfirm: () => {
+          const v = document.getElementById('nilai-sekelompok').value;
+          if (v === '') { Swal.showValidationMessage('Isi nilai terlebih dahulu.'); return false; }
+          return v;
+        }
+      }).then((result) => {
+        if (result.isConfirmed) {
+          google.script.run.withSuccessHandler(function(res) {
+            Swal.fire({ toast: true, position: 'top-end', icon: res.status === 'SUCCESS' ? 'success' : 'error', title: res.message, showConfirmButton: false, timer: 2500 });
+          }).withFailureHandler(function(error) {
+            Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, confirmButtonColor: '#ef4444' });
+          }).guruBeriNilaiSekelompok(idTugas, idKelompok, result.value, "");
+        }
+      });
+    }
+
+    function lihatRiwayatSubmisiTugas(riwayat) {
+      const html = riwayat.slice().reverse().map((r, idx) => `
+        <div class="text-left p-2 border-b border-slate-100 text-xs">
+          <p class="font-bold text-slate-600">Versi sebelumnya — dikumpul ${r.waktuKumpul}</p>
+          <p class="text-slate-500">${r.jenisJawaban === 'Link Drive' ? `<a href="${r.isiJawaban}" target="_blank" class="text-indigo-600 hover:underline">Buka Link Lama</a>` : String(r.isiJawaban || '').substring(0, 80)}</p>
+          <p class="mt-1">Nilai saat itu: <b>${r.nilai || '-'}</b> ${r.catatanGuru ? '• Catatan: ' + r.catatanGuru : ''}</p>
+        </div>`).join('') || '<p class="text-xs text-slate-400">Belum ada riwayat.</p>';
+      Swal.fire({ title: 'Riwayat Pengumpulan Sebelumnya', html: `<div class="max-h-72 overflow-y-auto">${html}</div>`, confirmButtonText: 'Tutup', confirmButtonColor: '#4f46e5' });
+    }
+
+    // ==================== ATUR KELOMPOK TUGAS (GURU) ====================
+    function bukaModalAturKelompok(idBarisTugas, kelas, judulTugas) {
+      Swal.fire({ title: 'Memuat data siswa & kelompok...', allowOutsideClick: false, didOpen: () => { Swal.showLoading() } });
+      google.script.run.withSuccessHandler(function(siswaKelas) {
+        google.script.run.withSuccessHandler(function(kelompokSaatIni) {
+          Swal.fire({
+            title: `Atur Kelompok — ${judulTugas} (${kelas})`,
+            width: 650,
+            html: `
+              <div class="text-left text-xs">
+                <div class="flex gap-2 mb-3">
+                  <button type="button" id="btn-mode-otomatis" class="flex-1 py-2 rounded-lg font-bold bg-indigo-600 text-white">Otomatis</button>
+                  <button type="button" id="btn-mode-manual" class="flex-1 py-2 rounded-lg font-bold bg-slate-100 text-slate-600">Manual</button>
+                </div>
+                <div id="area-mode-otomatis">
+                  <label class="block font-bold text-slate-500 uppercase text-[10px] mb-1">Jumlah Anggota per Kelompok</label>
+                  <input type="number" id="jumlah-anggota-kelompok" min="2" value="4" class="swal2-input m-0 w-32">
+                  <p class="text-slate-400 mt-2"><i class="fa-solid fa-circle-info"></i> Total ${siswaKelas.length} siswa di kelas ini akan diacak dan dibagi rata. Menyimpan ulang akan MENGGANTI pembagian kelompok yang lama.</p>
+                </div>
+                <div id="area-mode-manual" class="hidden">
+                  <div id="daftar-kelompok-manual" class="space-y-3"></div>
+                  <button type="button" onclick="tambahBarisKelompokManual()" class="mt-2 text-indigo-600 font-bold text-[11px]"><i class="fa-solid fa-plus"></i> Tambah Kelompok</button>
+                </div>
+                <div class="mt-3 pt-2 border-t border-slate-200">
+                  <p class="font-bold text-slate-500 uppercase text-[10px] mb-1">Kelompok Saat Ini:</p>
+                  <div class="text-[11px] text-slate-500">${kelompokSaatIni.length === 0 ? 'Belum ada kelompok.' : kelompokSaatIni.map(k => `<b>${k.namaKelompok}</b>: ${k.anggota.map(a => a.nama).join(', ')}`).join('<br>')}</div>
+                </div>
+              </div>`,
+            confirmButtonText: 'Simpan Pembagian Kelompok',
+            confirmButtonColor: '#4f46e5',
+            showCancelButton: true,
+            cancelButtonText: 'Tutup',
+            didOpen: () => {
+              window._siswaKelasAturKelompok = siswaKelas;
+              window._modeAturKelompok = 'otomatis';
+              document.getElementById('btn-mode-otomatis').onclick = () => {
+                window._modeAturKelompok = 'otomatis';
+                document.getElementById('btn-mode-otomatis').className = 'flex-1 py-2 rounded-lg font-bold bg-indigo-600 text-white';
+                document.getElementById('btn-mode-manual').className = 'flex-1 py-2 rounded-lg font-bold bg-slate-100 text-slate-600';
+                document.getElementById('area-mode-otomatis').classList.remove('hidden');
+                document.getElementById('area-mode-manual').classList.add('hidden');
+              };
+              document.getElementById('btn-mode-manual').onclick = () => {
+                window._modeAturKelompok = 'manual';
+                document.getElementById('btn-mode-manual').className = 'flex-1 py-2 rounded-lg font-bold bg-indigo-600 text-white';
+                document.getElementById('btn-mode-otomatis').className = 'flex-1 py-2 rounded-lg font-bold bg-slate-100 text-slate-600';
+                document.getElementById('area-mode-manual').classList.remove('hidden');
+                document.getElementById('area-mode-otomatis').classList.add('hidden');
+                if (document.getElementById('daftar-kelompok-manual').children.length === 0) tambahBarisKelompokManual();
+              };
+            },
+            preConfirm: () => {
+              if (window._modeAturKelompok === 'otomatis') {
+                const jumlah = document.getElementById('jumlah-anggota-kelompok').value;
+                if (!jumlah || jumlah < 2) { Swal.showValidationMessage('Jumlah anggota per kelompok minimal 2.'); return false; }
+                return { mode: 'otomatis', jumlah };
+              } else {
+                const kelompokEls = document.querySelectorAll('.baris-kelompok-manual');
+                const daftarKelompok = [];
+                for (const el of kelompokEls) {
+                  const nama = el.querySelector('.nama-kelompok-manual').value.trim() || 'Kelompok';
+                  const checks = el.querySelectorAll('.chk-anggota-manual:checked');
+                  const anggota = [...checks].map(c => ({ username: c.value, nama: c.getAttribute('data-nama') }));
+                  if (anggota.length > 0) daftarKelompok.push({ namaKelompok: nama, anggota });
+                }
+                if (daftarKelompok.length === 0) { Swal.showValidationMessage('Buat minimal 1 kelompok dengan anggota.'); return false; }
+                return { mode: 'manual', daftarKelompok };
+              }
+            }
+          }).then((result) => {
+            if (!result.isConfirmed) return;
+            Swal.fire({ title: 'Menyimpan...', allowOutsideClick: false, didOpen: () => { Swal.showLoading() } });
+            if (result.value.mode === 'otomatis') {
+              google.script.run.withSuccessHandler(function(res) {
+                Swal.fire({ icon: res.status === 'SUCCESS' ? 'success' : 'error', title: res.message, confirmButtonColor: '#4f46e5' });
+              }).withFailureHandler(function(error) {
+                Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, confirmButtonColor: '#ef4444' });
+              }).guruBuatKelompokOtomatis(idBarisTugas, result.value.jumlah);
+            } else {
+              google.script.run.withSuccessHandler(function(res) {
+                Swal.fire({ icon: res.status === 'SUCCESS' ? 'success' : 'error', title: res.message, confirmButtonColor: '#4f46e5' });
+              }).withFailureHandler(function(error) {
+                Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, confirmButtonColor: '#ef4444' });
+              }).guruSimpanKelompokManual(idBarisTugas, result.value.daftarKelompok);
+            }
+          });
+        }).withFailureHandler(function(error) {
+          Swal.fire({ icon: 'error', title: 'Gagal Memuat Kelompok', text: error.message, confirmButtonColor: '#ef4444' });
+        }).guruAmbilKelompokTugas(idBarisTugas);
+      }).withFailureHandler(function(error) {
+        Swal.fire({ icon: 'error', title: 'Gagal Memuat Siswa', text: error.message, confirmButtonColor: '#ef4444' });
+      }).guruAmbilSiswaUntukKelompok(idBarisTugas);
+    }
+
+    function tambahBarisKelompokManual() {
+      const wadah = document.getElementById('daftar-kelompok-manual');
+      const idx = wadah.children.length + 1;
+      const siswaKelas = window._siswaKelasAturKelompok || [];
+      const div = document.createElement('div');
+      div.className = 'baris-kelompok-manual p-2 border border-slate-200 rounded-lg';
+      div.innerHTML = `
+        <input type="text" class="nama-kelompok-manual swal2-input m-0 mb-1.5 w-full text-xs" value="Kelompok ${idx}" placeholder="Nama Kelompok">
+        <div class="grid grid-cols-2 gap-1 max-h-28 overflow-y-auto p-1 border border-slate-100 rounded-lg">
+          ${siswaKelas.map(s => `<label class="flex items-center gap-1.5 text-[11px]"><input type="checkbox" class="chk-anggota-manual" value="${s.username}" data-nama="${s.nama.replace(/"/g, '&quot;')}"> ${s.nama}</label>`).join('')}
+        </div>`;
+      wadah.appendChild(div);
     }
 
     // ==================== SUB-TAB MATERI / TUGAS (SISWA) ====================
@@ -2473,6 +2670,7 @@
           return;
         }
         area2.innerHTML = list.map(t => {
+          try {
           const sudahLewatDeadline = new Date() > new Date(t.deadline);
           const bisaKumpul = !sudahLewatDeadline || t.izinkanTerlambat === 'Ya';
           const badgeStatus = t.statusKumpul === 'Belum Kumpul'
@@ -2480,40 +2678,70 @@
             : t.statusKumpul === 'Terlambat'
             ? '<span class="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Terlambat</span>'
             : '<span class="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Tepat Waktu</span>';
+          // Pengaman: pastikan struktur data kelompok valid sebelum dipakai untuk merender
+          const kelompokValid = t.kelompok && Array.isArray(t.kelompok.anggota) ? t.kelompok : null;
 
           return `<div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
             <div class="flex justify-between items-start gap-2">
               <div>
-                <p class="font-bold text-sm text-slate-800">${t.judul}</p>
+                <p class="font-bold text-sm text-slate-800">${t.judul} ${t.jenisTugas === 'Kelompok' ? '<span class="ml-1 text-[10px] font-bold bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full align-middle"><i class="fa-solid fa-people-group"></i> Kelompok</span>' : ''}</p>
                 <p class="text-[11px] text-slate-400">${t.mapel ? t.mapel + ' • ' : ''}Oleh ${t.guruNama} • Deadline: ${String(t.deadline).replace('T', ' ')}</p>
               </div>
               ${badgeStatus}
             </div>
             <p class="text-xs text-slate-600 my-2">${t.deskripsi || ''}</p>
             ${t.linkFileLampiran ? `<a href="${t.linkFileLampiran}" target="_blank" class="text-xs font-bold text-indigo-600 hover:underline"><i class="fa-solid fa-paperclip"></i> Lihat Lampiran Soal</a>` : ''}
+            ${t.jenisTugas === 'Kelompok' ? (kelompokValid
+              ? `<div class="text-[11px] bg-violet-50 text-violet-700 rounded-xl p-2 mt-2"><b>${kelompokValid.namaKelompok || 'Kelompok'}</b>: ${kelompokValid.anggota.map(a => a && a.nama ? a.nama : '-').join(', ')}${t.usernamePengirim ? `<br>Dikumpulkan oleh: <b>${(kelompokValid.anggota.find(a => a && a.username === t.usernamePengirim) || {}).nama || t.usernamePengirim}</b>` : ''}</div>`
+              : `<p class="text-[11px] text-amber-600 mt-2"><i class="fa-solid fa-triangle-exclamation"></i> Anda belum dimasukkan ke kelompok manapun untuk tugas ini, hubungi guru.</p>`) : ''}
             ${t.nilai ? `<p class="text-xs font-bold text-emerald-700 mt-2"><i class="fa-solid fa-circle-check text-emerald-500"></i> Nilai: ${t.nilai} ${t.catatanGuru ? '— ' + t.catatanGuru : ''}</p>` : ''}
             <div class="mt-3 pt-3 border-t border-slate-100">
               ${bisaKumpul
-                ? `<button onclick="bukaModalKumpulTugas('${t.id}', '${t.judul.replace(/'/g, "\\'")}')" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded-xl transition">${t.statusKumpul === 'Belum Kumpul' ? '<i class="fa-solid fa-upload"></i> Kumpulkan Tugas' : '<i class="fa-solid fa-pen"></i> Ubah Jawaban'}</button>`
+                ? (t.jenisTugas === 'Kelompok' && !kelompokValid
+                  ? ''
+                  : `<button onclick='bukaModalKumpulTugas("${t.id}", "${String(t.judul).replace(/'/g, "\\'").replace(/"/g, '&quot;')}", "${t.jenisTugas}", ${JSON.stringify(kelompokValid).replace(/'/g, "&apos;")})' class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded-xl transition">${t.statusKumpul === 'Belum Kumpul' ? '<i class="fa-solid fa-upload"></i> Kumpulkan Tugas' : '<i class="fa-solid fa-pen"></i> Ubah/Perbaiki Jawaban'}</button>`)
                 : `<p class="text-center text-xs font-bold text-red-500"><i class="fa-solid fa-ban text-red-500"></i> Batas waktu sudah lewat, pengumpulan ditutup.</p>`}
             </div>
           </div>`;
+          } catch (errBaris) {
+            console.error('Gagal render 1 kartu tugas:', t, errBaris);
+            return `<div class="bg-red-50 p-4 rounded-2xl border border-red-200 text-xs text-red-500">Gagal menampilkan tugas "${(t && t.judul) || '?'}" (data tidak sesuai format). Hubungi Admin.</div>`;
+          }
         }).join('');
       }).withFailureHandler(function(error) {
         area2.innerHTML = `<p class="text-xs text-red-500 p-5 text-center"><i class="fa-solid fa-circle-xmark text-red-500"></i> Gagal memuat: ${error.message}</p>`;
       }).siswaAmbilTugasKelas(userProfile.kelas, userProfile.username);
     }
 
-    function bukaModalKumpulTugas(idTugas, judulTugas) {
+    function bukaModalKumpulTugas(idTugas, judulTugas, jenisTugas, kelompok) {
+      const anggotaLain = (jenisTugas === 'Kelompok' && kelompok) ? kelompok.anggota.filter(a => a.username !== userProfile.username) : [];
+      const htmlLaporan = anggotaLain.length > 0 ? `
+        <div class="mt-3 pt-3 border-t border-slate-200 text-left">
+          <label class="flex items-center gap-2 font-bold text-xs mb-2"><input type="checkbox" id="chk-laporkan-kontribusi" class="accent-amber-500"> Laporkan kontribusi anggota kelompok (opsional, hanya guru yang melihat)</label>
+          <div id="area-laporan-kontribusi" class="hidden space-y-2">
+            ${anggotaLain.map((a, idx) => `
+              <div class="p-2 bg-slate-50 rounded-lg">
+                <p class="text-xs font-bold">${a.nama}</p>
+                <div class="flex gap-3 mt-1">
+                  <label class="flex items-center gap-1 text-[11px]"><input type="radio" name="kontribusi-${idx}" value="Ikut" checked class="accent-emerald-600"> Ikut mengerjakan</label>
+                  <label class="flex items-center gap-1 text-[11px]"><input type="radio" name="kontribusi-${idx}" value="Tidak Ikut" class="accent-red-500"> Tidak ikut/tidak membantu</label>
+                </div>
+                <input type="text" class="input-catatan-kontribusi swal2-input m-0 mt-1 w-full text-[11px]" data-username="${a.username}" data-idx="${idx}" placeholder="Catatan singkat (opsional)">
+              </div>`).join('')}
+          </div>
+        </div>` : '';
+
       Swal.fire({
         title: 'Kumpulkan: ' + judulTugas,
         html: `
+          ${jenisTugas === 'Kelompok' && kelompok ? `<p class="text-[11px] text-violet-600 bg-violet-50 rounded-lg p-2 mb-2 text-left"><i class="fa-solid fa-people-group"></i> Kelompok: <b>${kelompok.namaKelompok}</b> (${kelompok.anggota.map(a => a.nama).join(', ')}). Anda mengumpulkan atas nama seluruh kelompok.</p>` : ''}
           <div class="text-left text-xs">
             <label class="flex items-center gap-2 font-bold mb-2"><input type="radio" name="jenis-jawaban" value="Link Drive" checked class="accent-emerald-600"> Link Google Drive</label>
             <label class="flex items-center gap-2 font-bold mb-2"><input type="radio" name="jenis-jawaban" value="Teks" class="accent-emerald-600"> Jawaban Teks Langsung</label>
           </div>
           <input type="url" id="input-link-jawaban" class="swal2-input" placeholder="https://drive.google.com/...">
           <textarea id="input-teks-jawaban" class="swal2-textarea hidden" placeholder="Tulis jawaban Anda di sini..."></textarea>
+          ${htmlLaporan}
         `,
         didOpen: () => {
           document.querySelectorAll('input[name="jenis-jawaban"]').forEach(r => {
@@ -2521,6 +2749,10 @@
               document.getElementById('input-link-jawaban').classList.toggle('hidden', e.target.value !== 'Link Drive');
               document.getElementById('input-teks-jawaban').classList.toggle('hidden', e.target.value !== 'Teks');
             });
+          });
+          const chkLaporkan = document.getElementById('chk-laporkan-kontribusi');
+          if (chkLaporkan) chkLaporkan.addEventListener('change', (e) => {
+            document.getElementById('area-laporan-kontribusi').classList.toggle('hidden', !e.target.checked);
           });
         },
         confirmButtonText: 'Kumpulkan Sekarang',
@@ -2534,7 +2766,16 @@
             Swal.showValidationMessage('Jawaban tidak boleh kosong!');
             return false;
           }
-          return { jenis, isi };
+          let laporanKontribusi = [];
+          const chkLaporkan = document.getElementById('chk-laporkan-kontribusi');
+          if (chkLaporkan && chkLaporkan.checked) {
+            anggotaLain.forEach((a, idx) => {
+              const status = document.querySelector(`input[name="kontribusi-${idx}"]:checked`).value;
+              const catatan = document.querySelector(`.input-catatan-kontribusi[data-idx="${idx}"]`).value.trim();
+              laporanKontribusi.push({ username: a.username, status, catatan });
+            });
+          }
+          return { jenis, isi, laporanKontribusi };
         }
       }).then((result) => {
         if (result.isConfirmed) {
@@ -2547,7 +2788,7 @@
             } else {
               Swal.fire({ icon: 'error', title: 'Gagal', text: res.message, confirmButtonColor: '#ef4444' });
             }
-          }).siswaKumpulkanTugas(idTugas, userProfile.username, userProfile.nama, userProfile.kelas, result.value.jenis, result.value.isi);
+          }).siswaKumpulkanTugas(idTugas, userProfile.username, userProfile.nama, userProfile.kelas, result.value.jenis, result.value.isi, result.value.laporanKontribusi);
         }
       });
     }
