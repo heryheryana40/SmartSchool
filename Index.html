@@ -881,7 +881,7 @@
             <div>
               <label class="block text-[11px] font-bold text-slate-400 uppercase mb-1">Jenis Ujian</label>
               <select id="sesi-jenis" class="w-full p-2.5 border rounded-xl text-sm bg-white font-semibold text-slate-700">
-                <option>Ulangan Harian</option><option>Kuis</option><option>UTS</option><option>UAS</option><option>Latihan/Try Out</option>
+                <option>Ulangan Harian</option><option>Kuis</option><option>UTS</option><option>UAS</option><option>Latihan/Try Out</option><option>Remedial</option>
               </select>
             </div>
             <div>
@@ -910,13 +910,24 @@
             </div>
           </div>
           <div>
-            <label class="block text-[11px] font-bold text-slate-400 uppercase mb-1">Token Ujian (kosongkan untuk dibuat otomatis)</label>
-            <input type="text" id="sesi-token" placeholder="Contoh: UH3A1" class="w-full p-2.5 border rounded-xl text-sm bg-slate-50/50 uppercase font-mono tracking-widest">
+            <label class="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">Mode Token</label>
+            <div class="flex gap-4 mb-2">
+              <label class="flex items-center gap-2 text-xs font-bold text-slate-600"><input type="radio" name="sesi-mode-token" id="sesi-mode-token-manual" value="Manual" checked onchange="_toggleModeTokenSesi()" class="w-4 h-4 accent-indigo-600"> Manual (token tetap)</label>
+              <label class="flex items-center gap-2 text-xs font-bold text-slate-600"><input type="radio" name="sesi-mode-token" id="sesi-mode-token-otomatis" value="Otomatis" onchange="_toggleModeTokenSesi()" class="w-4 h-4 accent-indigo-600"> Otomatis (ganti tiap 10 menit)</label>
+            </div>
+            <div id="area-token-manual">
+              <input type="text" id="sesi-token" placeholder="Contoh: UH3A1 (kosongkan untuk dibuat otomatis sekali, tidak berganti)" class="w-full p-2.5 border rounded-xl text-sm bg-slate-50/50 uppercase font-mono tracking-widest">
+            </div>
+            <p id="info-token-otomatis" class="hidden text-[10px] text-slate-400"><i class="fa-solid fa-circle-info"></i> Token akan otomatis berganti tiap 10 menit selama ujian berlangsung. Token yang berlaku saat ini bisa dilihat &amp; dibacakan ke siswa dari daftar sesi ujian setelah disimpan (cocok untuk ujian yang diawasi langsung).</p>
           </div>
           <div class="flex flex-wrap gap-x-5 gap-y-2">
             <label class="flex items-center gap-2 text-xs font-bold text-slate-600"><input type="checkbox" id="sesi-acak-soal" class="w-4 h-4 rounded accent-indigo-600"> Acak urutan soal</label>
             <label class="flex items-center gap-2 text-xs font-bold text-slate-600"><input type="checkbox" id="sesi-acak-opsi" class="w-4 h-4 rounded accent-indigo-600"> Acak urutan opsi jawaban</label>
             <label class="flex items-center gap-2 text-xs font-bold text-slate-600"><input type="checkbox" id="sesi-tampilkan-nilai" checked class="w-4 h-4 rounded accent-indigo-600"> Tampilkan nilai langsung ke siswa</label>
+          </div>
+          <div class="bg-indigo-50/60 border border-indigo-100 rounded-xl p-3">
+            <label class="flex items-center gap-2 text-xs font-bold text-indigo-700"><input type="checkbox" id="sesi-sertakan-rekap" checked class="w-4 h-4 rounded accent-indigo-600"> Sertakan nilai ujian ini ke Rekap Nilai Keseluruhan</label>
+            <p class="text-[10px] text-indigo-500 mt-1 ml-6">Kalau dicentang, nilai ujian ini ikut dihitung ke Nilai Akhir/Rapor siswa di menu Rekap Nilai. Matikan untuk ujian yang sifatnya cuma latihan/try out.</p>
           </div>
 
           <div class="border-t border-slate-100 pt-4">
@@ -972,7 +983,7 @@
           <i class="fa-solid fa-bullseye w-4 text-center"></i> <span class="menu-label-sis">Ujian CBT</span>
         </button>
         <button onclick="pindahMenuSiswa('s-rekap')" id="btn-s-rekap" class="menu-siswa-item w-full flex items-center gap-3.5 px-4 py-3 rounded-xl font-semibold text-sm transition text-slate-500 hover:bg-slate-50 hover:text-slate-800 border-l-[3px] border-transparent">
-          <i class="fa-solid fa-chart-simple w-4 text-center"></i> <span class="menu-label-sis">Rekap Kehadiran & Tugas</span>
+          <i class="fa-solid fa-chart-simple w-4 text-center"></i> <span class="menu-label-sis">Rekap</span>
         </button>
       </nav>
     </aside>
@@ -3941,6 +3952,8 @@
             <th class="p-2 text-center">Rata-rata Tugas</th>
             <th class="p-2 text-center">UTS</th>
             <th class="p-2 text-center">UAS</th>
+            ${hasil.daftarSesiCBT.map(sesi => `<th class="p-2 text-center">${sesi.judul}</th>`).join('')}
+            ${hasil.daftarSesiCBT.length > 0 ? `<th class="p-2 text-center">Rata-rata Ujian</th>` : ''}
             <th class="p-2 text-center bg-indigo-50 text-indigo-700">Nilai Akhir (Rapor)</th>
           </tr></thead><tbody class="divide-y divide-slate-100">`;
 
@@ -3953,11 +3966,13 @@
             <td class="p-2 text-center font-black text-indigo-600">${s.rataRataTugas}</td>
             <td class="p-2 text-center font-bold ${s.nilaiUTS === '-' ? 'text-slate-300 italic' : 'text-slate-700'}">${s.nilaiUTS}</td>
             <td class="p-2 text-center font-bold ${s.nilaiUAS === '-' ? 'text-slate-300 italic' : 'text-slate-700'}">${s.nilaiUAS}</td>
+            ${s.daftarNilaiCBT.map(n => `<td class="p-2 text-center ${n.nilai === '-' ? 'text-slate-300 italic' : 'text-slate-700 font-bold'}">${n.nilai}</td>`).join('')}
+            ${hasil.daftarSesiCBT.length > 0 ? `<td class="p-2 text-center font-black text-indigo-600">${s.nilaiCBT}</td>` : ''}
             <td class="p-2 text-center font-black bg-indigo-50/60 ${s.nilaiAkhir === '-' ? 'text-slate-300 italic' : 'text-indigo-700'}">${s.nilaiAkhir}</td>
           </tr>`;
         });
         html += `</tbody></table>
-        <p class="text-[10px] text-slate-400 mt-2">Bobot saat ini — Tugas: ${hasil.bobot.bobotTugas}% • UTS: ${hasil.bobot.bobotUTS}% • UAS: ${hasil.bobot.bobotUAS}% (klik "Atur Bobot Nilai" untuk mengubah)</p>`;
+        <p class="text-[10px] text-slate-400 mt-2">Bobot saat ini — Tugas: ${hasil.bobot.bobotTugas}% • UTS: ${hasil.bobot.bobotUTS}% • UAS: ${hasil.bobot.bobotUAS}% • CBT/Ujian: ${hasil.bobot.bobotCBT}% (klik "Atur Bobot Nilai" untuk mengubah). Kolom ujian di atas hanya menampilkan sesi yang ditandai "Sertakan Rekap" saat dibuat.</p>`;
         area.innerHTML = html;
       }).withFailureHandler(function(error) {
         area.innerHTML = `<p class="text-xs text-red-500 text-center p-5"><i class="fa-solid fa-circle-xmark text-red-500"></i> Gagal memuat: ${error.message}</p>`;
@@ -3974,12 +3989,14 @@
         Swal.fire({
           title: 'Atur Bobot Nilai',
           html: `
-            <p class="text-[11px] text-slate-400 text-left mb-3">Bobot ini berlaku untuk mapel <b>${mapel || '(mapel Anda)'}</b>, dipakai untuk menghitung Nilai Akhir/Rapor. Total ketiganya harus 100%.</p>
+            <p class="text-[11px] text-slate-400 text-left mb-3">Bobot ini berlaku untuk mapel <b>${mapel || '(mapel Anda)'}</b>, dipakai untuk menghitung Nilai Akhir/Rapor. Total keempatnya harus 100%.</p>
             <div class="text-left text-xs space-y-2">
               <div class="flex items-center justify-between"><label class="font-bold">Bobot Tugas (%)</label><input type="number" id="bobot-tugas" min="0" max="100" value="${bobot.bobotTugas}" class="swal2-input m-0 w-20 text-center"></div>
               <div class="flex items-center justify-between"><label class="font-bold">Bobot UTS (%)</label><input type="number" id="bobot-uts" min="0" max="100" value="${bobot.bobotUTS}" class="swal2-input m-0 w-20 text-center"></div>
               <div class="flex items-center justify-between"><label class="font-bold">Bobot UAS (%)</label><input type="number" id="bobot-uas" min="0" max="100" value="${bobot.bobotUAS}" class="swal2-input m-0 w-20 text-center"></div>
-            </div>`,
+              <div class="flex items-center justify-between"><label class="font-bold">Bobot CBT/Ujian (%)</label><input type="number" id="bobot-cbt" min="0" max="100" value="${bobot.bobotCBT}" class="swal2-input m-0 w-20 text-center"></div>
+            </div>
+            <p class="text-[10px] text-slate-400 text-left mt-2"><i class="fa-solid fa-circle-info"></i> Nilai CBT/Ujian dihitung dari rata-rata sesi ujian (Ulangan Harian, dll) yang ditandai "Sertakan Rekap" saat dibuat. Sesi yang tidak ditandai (mis. Latihan/Try Out) tidak ikut dihitung di sini.</p>`,
           confirmButtonText: 'Simpan Bobot',
           confirmButtonColor: '#4f46e5',
           showCancelButton: true,
@@ -3988,11 +4005,12 @@
             const t = Number(document.getElementById('bobot-tugas').value) || 0;
             const u = Number(document.getElementById('bobot-uts').value) || 0;
             const a = Number(document.getElementById('bobot-uas').value) || 0;
-            if (t + u + a !== 100) {
-              Swal.showValidationMessage(`Total bobot harus 100% (saat ini ${t + u + a}%)`);
+            const c = Number(document.getElementById('bobot-cbt').value) || 0;
+            if (t + u + a + c !== 100) {
+              Swal.showValidationMessage(`Total bobot harus 100% (saat ini ${t + u + a + c}%)`);
               return false;
             }
-            return { t, u, a };
+            return { t, u, a, c };
           }
         }).then((result) => {
           if (result.isConfirmed) {
@@ -4001,7 +4019,7 @@
               Swal.fire({ toast: true, position: 'top-end', icon: res.status === 'SUCCESS' ? 'success' : 'error', title: res.message, showConfirmButton: false, timer: 2500 });
             }).withFailureHandler(function(error) {
               Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, confirmButtonColor: '#ef4444' });
-            }).guruSimpanBobotNilai(userProfile.username, mapel, result.value.t, result.value.u, result.value.a);
+            }).guruSimpanBobotNilai(userProfile.username, mapel, result.value.t, result.value.u, result.value.a, result.value.c);
           }
         });
       }).withFailureHandler(function(error) {
@@ -4133,11 +4151,14 @@
         return Swal.fire({ icon: 'warning', title: 'Data Kosong', text: 'Pilih kelas dan pastikan rekap sudah tampil dulu.', confirmButtonColor: '#4f46e5' });
       }
       const hasil = _rekapNilaiGuruTerakhir;
-      const header = ['Nama Siswa', 'Kehadiran (%)', ...hasil.daftarTugas.map(t => t.judul), 'Rata-rata Tugas', 'UTS', 'UAS', 'Nilai Akhir (Rapor)'];
+      const header = ['Nama Siswa', 'Kehadiran (%)', ...hasil.daftarTugas.map(t => t.judul), 'Rata-rata Tugas', 'UTS', 'UAS', ...hasil.daftarSesiCBT.map(s => s.judul), ...(hasil.daftarSesiCBT.length > 0 ? ['Rata-rata Ujian'] : []), 'Nilai Akhir (Rapor)'];
       const rows = hasil.daftarSiswa.map(s => [
         s.nama, s.persentaseKehadiran,
         ...s.daftarNilaiTugas.map(n => n.nilai),
-        s.rataRataTugas, s.nilaiUTS, s.nilaiUAS, s.nilaiAkhir
+        s.rataRataTugas, s.nilaiUTS, s.nilaiUAS,
+        ...s.daftarNilaiCBT.map(n => n.nilai),
+        ...(hasil.daftarSesiCBT.length > 0 ? [s.nilaiCBT] : []),
+        s.nilaiAkhir
       ]);
       const dataExport = [header, ...rows];
       const ws = XLSX.utils.aoa_to_sheet(dataExport);
@@ -4356,7 +4377,7 @@
     function downloadTemplateSoal() {
       const dataTemplate = [
         ['Tipe', 'Kelas (opsional)', 'Topik/Bab', 'Pertanyaan', 'Opsi A', 'Opsi B', 'Opsi C', 'Opsi D', 'Opsi E', 'Kunci Jawaban', 'Poin', 'Level Kognitif'],
-        ['PG', 'VII-A', 'Aljabar Linear', 'Berapakah hasil dari 2x + 3 = 7?', '1', '2', '3', '4', '', 'B', '10', 'C2'],
+        ['PG', 'VII-A', 'Aljabar Linear', 'Berapakah hasil dari 2x + 3 = 7?', '1', '2', '3', '4', '5', 'B', '10', 'C2'],
         ['PGK', '', 'Bilangan Prima', 'Manakah yang termasuk bilangan prima? (jawaban bisa lebih dari 1)', '2', '4', '7', '9', '11', 'A,C,E', '10', 'C1'],
         ['Isian', 'VII-A', 'Ibu Kota', 'Ibu kota Indonesia adalah ...', '', '', '', '', '', 'Jakarta', '5', 'C1'],
         ['Essay', '', 'Fotosintesis', 'Jelaskan proses fotosintesis pada tumbuhan!', '', '', '', '', '', 'Pedoman penilaian (opsional, boleh dikosongkan)', '20', 'C4']
@@ -4370,7 +4391,7 @@
         ['PETUNJUK PENGISIAN'],
         ['Tipe: isi salah satu — PG (Pilihan Ganda), PGK (Pilihan Ganda Kompleks), Isian (Isian Singkat), Essay (Essay/Uraian)'],
         ['Kelas: opsional. Kosongkan kalau soal berlaku untuk semua kelas yang Anda ampu, tidak perlu duplikat soal per kelas.'],
-        ['Opsi A-E: hanya diisi untuk tipe PG/PGK. PG memakai 4 opsi (A-D), PGK boleh sampai 5 opsi (A-E). Kosongkan untuk Isian/Essay.'],
+        ['Opsi A-E: hanya diisi untuk tipe PG/PGK. Kedua tipe WAJIB diisi lengkap 5 opsi (A-E). Kosongkan untuk Isian/Essay.'],
         ['Kunci Jawaban:'],
         ['  - PG: isi 1 huruf, contoh: B'],
         ['  - PGK: isi beberapa huruf dipisah koma, contoh: A,C,E'],
@@ -4417,7 +4438,7 @@
             if (!tipeValid.includes(tipe)) { errorBaris.push(`Baris ${nomorBaris}: tipe "${tipe}" tidak dikenal (harus PG/PGK/Isian/Essay)`); return; }
             if (!pertanyaan) { errorBaris.push(`Baris ${nomorBaris}: pertanyaan kosong`); return; }
             if ((tipe === 'PG' || tipe === 'PGK') && !kunci) { errorBaris.push(`Baris ${nomorBaris}: kunci jawaban kosong untuk soal ${tipe}`); return; }
-            if (tipe === 'PG' && (!opsi[0] || !opsi[1] || !opsi[2] || !opsi[3])) { errorBaris.push(`Baris ${nomorBaris}: opsi A-D wajib lengkap untuk soal PG`); return; }
+            if ((tipe === 'PG' || tipe === 'PGK') && (!opsi[0] || !opsi[1] || !opsi[2] || !opsi[3] || !opsi[4])) { errorBaris.push(`Baris ${nomorBaris}: opsi A-E wajib lengkap untuk soal ${tipe}`); return; }
             if (tipe === 'Isian' && !kunci) { errorBaris.push(`Baris ${nomorBaris}: kunci jawaban kosong untuk soal Isian`); return; }
 
             daftarSoal.push({ tipe, kelas, topik, pertanyaan, opsi, kunci, poin, levelKognitif: level });
@@ -4504,7 +4525,7 @@
       document.getElementById('btn-ai-soal').classList.toggle('hidden', tipe !== 'PG' && tipe !== 'PGK');
 
       if (tipe === 'PG' || tipe === 'PGK') {
-        const jumlahOpsi = tipe === 'PGK' ? 5 : 4;
+        const jumlahOpsi = 5;
         const kunciSet = kunciLama.split(',').map(x => x.trim().toUpperCase());
         let html = `<label class="block text-[11px] font-bold text-slate-400 uppercase mb-1">Opsi Jawaban ${tipe === 'PGK' ? '& centang SEMUA kunci yang benar' : '& pilih SATU kunci yang benar'}</label>`;
         const huruf = ['A', 'B', 'C', 'D', 'E'];
@@ -4578,7 +4599,7 @@
         const dipilih = Array.from(document.querySelectorAll('input[name="soal-kunci-radio"]:checked')).map(el => el.value);
         if (dipilih.length === 0) { Swal.fire({ icon: 'warning', title: 'Pilih kunci jawaban dulu' }); return; }
         kunci = dipilih.join(',');
-        const jumlahOpsi = tipe === 'PGK' ? 5 : 4;
+        const jumlahOpsi = 5;
         for (let i = 0; i < jumlahOpsi; i++) { if (!opsi[i]) { Swal.fire({ icon: 'warning', title: 'Lengkapi semua opsi jawaban' }); return; } }
       } else if (tipe === 'Isian') {
         kunci = document.getElementById('soal-kunci-isian').value.trim();
@@ -4612,7 +4633,12 @@
     // ==================== MODUL CBT / UJIAN (GURU) ====================
     const LABEL_JENIS_UJIAN_BADGE = { Terjadwal: 'bg-sky-50 text-sky-600', Berlangsung: 'bg-emerald-50 text-emerald-600', Selesai: 'bg-slate-100 text-slate-500', Nonaktif: 'bg-red-50 text-red-500' };
 
+    let _intervalTokenOtomatis = [];
+
     function muatCbtGuru() {
+      _intervalTokenOtomatis.forEach(iv => clearInterval(iv));
+      _intervalTokenOtomatis = [];
+
       google.script.run.withSuccessHandler(function(daftar) {
         const area = document.getElementById('area-list-sesi-cbt');
         if (!daftar || daftar.length === 0) {
@@ -4627,13 +4653,17 @@
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${LABEL_JENIS_UJIAN_BADGE[s.statusWaktu] || 'bg-slate-100 text-slate-500'}">${s.statusWaktu}</span>
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600">${s.jenis}</span>
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">${s.kelas.join(', ')}</span>
+                  ${!s.sertakanRekap ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-400"><i class="fa-solid fa-eye-slash"></i> Tidak masuk Rekap Nilai</span>` : ''}
                 </div>
                 <p class="font-bold text-slate-800 text-sm">${s.judul}</p>
                 <p class="text-[11px] text-slate-400 mt-0.5"><i class="fa-solid fa-calendar-days"></i> ${s.tglMulai} ${s.jamMulai} &rarr; ${s.tglSelesai} ${s.jamSelesai} • <i class="fa-solid fa-clock"></i> ${s.durasiMenit} menit • <i class="fa-solid fa-list-ol"></i> ${s.jumlahSoal} soal</p>
-                <p class="text-[11px] text-slate-500 mt-1 font-mono">Token: <b class="tracking-widest bg-slate-100 px-1.5 py-0.5 rounded">${s.token}</b></p>
+                ${s.modeToken === 'Otomatis'
+                  ? `<p class="text-[11px] text-slate-500 mt-1 font-mono">Token (otomatis ganti tiap 10 menit): <span id="token-otomatis-${s.id}" class="tracking-widest bg-violet-50 text-violet-700 px-1.5 py-0.5 rounded font-bold">memuat...</span></p>`
+                  : `<p class="text-[11px] text-slate-500 mt-1 font-mono">Token: <b class="tracking-widest bg-slate-100 px-1.5 py-0.5 rounded">${s.token}</b></p>`}
               </div>
               <div class="flex flex-wrap gap-1.5 shrink-0">
                 <button onclick="lihatRekapHasilSesi('${s.id}')" class="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition"><i class="fa-solid fa-chart-simple"></i> Hasil</button>
+                <button onclick="duplikatSesiRemedial('${s.id}')" class="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-violet-50 text-violet-600 hover:bg-violet-100 transition"><i class="fa-solid fa-clone"></i> Remedial</button>
                 <button onclick="bukaModalSesi('${s.id}')" class="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-slate-50 text-slate-600 hover:bg-slate-100 transition"><i class="fa-solid fa-pen"></i> Edit</button>
                 <button onclick="ubahStatusAktifSesi('${s.id}', '${s.statusManual === 'Nonaktif' ? 'Aktif' : 'Nonaktif'}')" class="text-[11px] font-bold px-3 py-1.5 rounded-lg ${s.statusManual === 'Nonaktif' ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-amber-50 text-amber-600 hover:bg-amber-100'} transition">${s.statusManual === 'Nonaktif' ? '<i class="fa-solid fa-power-off"></i> Aktifkan' : '<i class="fa-solid fa-pause"></i> Nonaktifkan'}</button>
                 <button onclick="hapusSesiUjian('${s.id}')" class="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition"><i class="fa-solid fa-trash"></i></button>
@@ -4641,6 +4671,22 @@
             </div>
           </div>
         `).join('');
+
+        // Untuk sesi bermode token Otomatis: mulai polling ke server tiap 20 detik supaya guru bisa lihat & bacakan token yang berlaku saat ini
+        daftar.filter(s => s.modeToken === 'Otomatis').forEach(s => {
+          const perbarui = () => {
+            google.script.run.withSuccessHandler(function(res) {
+              const el = document.getElementById('token-otomatis-' + s.id);
+              if (!el) return; // Panel sudah ditutup/berganti, hentikan diam-diam
+              if (res.status === 'SUCCESS') {
+                const menit = Math.floor(res.detikTersisa / 60), detik = res.detikTersisa % 60;
+                el.innerHTML = `${res.token} <span class="font-normal text-violet-400">(ganti dalam ${menit}:${detik.toString().padStart(2, '0')})</span>`;
+              }
+            }).guruAmbilTokenOtomatisSaatIni(s.id);
+          };
+          perbarui();
+          _intervalTokenOtomatis.push(setInterval(perbarui, 20000));
+        });
       }).guruAmbilDaftarSesi(userProfile.username);
     }
 
@@ -4664,6 +4710,33 @@
       });
     }
 
+    function _toggleModeTokenSesi() {
+      const otomatis = document.getElementById('sesi-mode-token-otomatis').checked;
+      document.getElementById('area-token-manual').classList.toggle('hidden', otomatis);
+      document.getElementById('info-token-otomatis').classList.toggle('hidden', !otomatis);
+    }
+
+    function duplikatSesiRemedial(idSesi) {
+      Swal.fire({
+        title: 'Buat Sesi Remedial?',
+        html: 'Soal & pengaturan (kecuali jadwal &amp; token) akan disalin dari sesi ini. Setelah dibuat, form edit akan terbuka supaya Anda bisa atur jadwal &amp; tokennya, lalu bagikan token itu <b>hanya ke siswa yang perlu remedial</b> (peserta lain di kelas yang sama tidak akan ikut kalau tidak diberi tokennya).',
+        icon: 'question', showCancelButton: true, confirmButtonText: 'Ya, Buat Remedial', cancelButtonText: 'Batal', confirmButtonColor: '#7c3aed'
+      }).then((result) => {
+        if (!result.isConfirmed) return;
+        Swal.fire({ title: 'Menduplikat sesi...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
+        google.script.run.withSuccessHandler(function(res) {
+          Swal.close();
+          if (res.status !== 'SUCCESS') { Swal.fire({ icon: 'error', title: 'Gagal', text: res.message, confirmButtonColor: '#ef4444' }); return; }
+          muatCbtGuru();
+          Swal.fire({ icon: 'success', title: 'Sesi Remedial Dibuat', text: res.message, confirmButtonColor: '#7c3aed' }).then(() => {
+            bukaModalSesi(res.idBaru);
+          });
+        }).withFailureHandler(function(err) {
+          Swal.fire({ icon: 'error', title: 'Gagal', text: err.message, confirmButtonColor: '#ef4444' });
+        }).guruDuplikatSesiRemedial(idSesi);
+      });
+    }
+
     function bukaModalSesi(idSesi) {
       _daftarSoalTerpilihSesi = {};
       document.getElementById('sesi-id-edit').value = '';
@@ -4671,9 +4744,13 @@
       document.getElementById('sesi-jenis').value = 'Ulangan Harian';
       document.getElementById('sesi-durasi').value = 60;
       document.getElementById('sesi-token').value = '';
+      document.getElementById('sesi-mode-token-manual').checked = true;
+      document.getElementById('sesi-mode-token-otomatis').checked = false;
+      _toggleModeTokenSesi();
       document.getElementById('sesi-acak-soal').checked = false;
       document.getElementById('sesi-acak-opsi').checked = false;
       document.getElementById('sesi-tampilkan-nilai').checked = true;
+      document.getElementById('sesi-sertakan-rekap').checked = true;
       const hariIni = new Date().toISOString().split('T')[0];
       document.getElementById('sesi-tgl-mulai').value = hariIni;
       document.getElementById('sesi-tgl-selesai').value = hariIni;
@@ -4681,39 +4758,52 @@
       document.getElementById('sesi-jam-selesai').value = '23:59';
       document.getElementById('judul-modal-sesi').innerHTML = `<i class="fa-solid fa-laptop text-indigo-600"></i> Buat Sesi Ujian Baru`;
 
-      const kelasHtml = _kelasListGuruCBT.length === 0
-        ? `<p class="text-xs text-amber-600 font-bold col-span-full"><i class="fa-solid fa-triangle-exclamation"></i> Anda belum mengatur kelas ampuan di menu "Pengaturan Mengajar".</p>`
-        : _kelasListGuruCBT.map(k => `<label class="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg text-xs font-bold text-slate-600 cursor-pointer"><input type="checkbox" value="${k}" class="chk-sesi-kelas w-3.5 h-3.5 accent-indigo-600"> ${k}</label>`).join('');
-      document.getElementById('sesi-kelas-peserta').innerHTML = kelasHtml;
+      // PENTING: muat ulang daftar kelas ampuan setiap kali modal ini dibuka, JANGAN bergantung pada
+      // cache _kelasListGuruCBT dari tab Bank Soal — kalau guru belum sempat buka tab itu, cache-nya
+      // masih kosong dan bikin validasi "pilih kelas" selalu gagal walau sudah dicentang.
+      google.script.run.withSuccessHandler(function(plottingGuru) {
+        _mapelGuruAktifCBT = plottingGuru.mataPelajaran || _mapelGuruAktifCBT || "";
+        _kelasListGuruCBT = plottingGuru.kelasList || [];
 
-      document.getElementById('sesi-picker-kelas').innerHTML = `<option value="">Semua Kelas</option>` + _kelasListGuruCBT.map(k => `<option value="${k}">${k}</option>`).join('');
+        const kelasHtml = _kelasListGuruCBT.length === 0
+          ? `<p class="text-xs text-amber-600 font-bold col-span-full"><i class="fa-solid fa-triangle-exclamation"></i> Anda belum mengatur kelas ampuan di menu "Pengaturan Mengajar".</p>`
+          : _kelasListGuruCBT.map(k => `<label class="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg text-xs font-bold text-slate-600 cursor-pointer"><input type="checkbox" value="${k}" class="chk-sesi-kelas w-3.5 h-3.5 accent-indigo-600"> ${k}</label>`).join('');
+        document.getElementById('sesi-kelas-peserta').innerHTML = kelasHtml;
+        document.getElementById('sesi-picker-kelas').innerHTML = `<option value="">Semua Kelas</option>` + _kelasListGuruCBT.map(k => `<option value="${k}">${k}</option>`).join('');
+
+        if (idSesi) {
+          google.script.run.withSuccessHandler(function(sesi) {
+            if (!sesi) return;
+            document.getElementById('sesi-id-edit').value = sesi.id;
+            document.getElementById('sesi-judul').value = sesi.judul;
+            document.getElementById('sesi-jenis').value = sesi.jenis;
+            document.getElementById('sesi-durasi').value = sesi.durasiMenit;
+            document.getElementById('sesi-token').value = sesi.token;
+            document.getElementById('sesi-mode-token-manual').checked = sesi.modeToken !== 'Otomatis';
+            document.getElementById('sesi-mode-token-otomatis').checked = sesi.modeToken === 'Otomatis';
+            _toggleModeTokenSesi();
+            document.getElementById('sesi-acak-soal').checked = sesi.acakSoal;
+            document.getElementById('sesi-acak-opsi').checked = sesi.acakOpsi;
+            document.getElementById('sesi-tampilkan-nilai').checked = sesi.tampilkanNilai;
+            document.getElementById('sesi-sertakan-rekap').checked = sesi.sertakanRekap;
+            document.getElementById('sesi-tgl-mulai').value = sesi.tglMulai;
+            document.getElementById('sesi-tgl-selesai').value = sesi.tglSelesai;
+            document.getElementById('sesi-jam-mulai').value = sesi.jamMulai;
+            document.getElementById('sesi-jam-selesai').value = sesi.jamSelesai;
+            document.getElementById('judul-modal-sesi').innerHTML = `<i class="fa-solid fa-pen text-indigo-600"></i> Edit Sesi Ujian`;
+            document.querySelectorAll('.chk-sesi-kelas').forEach(el => { if (sesi.kelas.includes(el.value)) el.checked = true; });
+            sesi.daftarIdSoal.forEach(id => { _daftarSoalTerpilihSesi[id] = true; });
+            muatPickerSoalSesi();
+          }).guruAmbilDetailSesi(idSesi);
+        } else {
+          muatPickerSoalSesi();
+        }
+      }).ambilKelasAmpoanGuru(userProfile.username);
+
       google.script.run.withSuccessHandler(function(daftarTopik) {
         document.getElementById('sesi-picker-topik').innerHTML = `<option value="">Semua Topik</option>` + daftarTopik.map(t => `<option value="${t}">${t}</option>`).join('');
       }).guruAmbilDaftarTopikSoal(userProfile.username, "", "");
 
-      if (idSesi) {
-        google.script.run.withSuccessHandler(function(sesi) {
-          if (!sesi) return;
-          document.getElementById('sesi-id-edit').value = sesi.id;
-          document.getElementById('sesi-judul').value = sesi.judul;
-          document.getElementById('sesi-jenis').value = sesi.jenis;
-          document.getElementById('sesi-durasi').value = sesi.durasiMenit;
-          document.getElementById('sesi-token').value = sesi.token;
-          document.getElementById('sesi-acak-soal').checked = sesi.acakSoal;
-          document.getElementById('sesi-acak-opsi').checked = sesi.acakOpsi;
-          document.getElementById('sesi-tampilkan-nilai').checked = sesi.tampilkanNilai;
-          document.getElementById('sesi-tgl-mulai').value = sesi.tglMulai;
-          document.getElementById('sesi-tgl-selesai').value = sesi.tglSelesai;
-          document.getElementById('sesi-jam-mulai').value = sesi.jamMulai;
-          document.getElementById('sesi-jam-selesai').value = sesi.jamSelesai;
-          document.getElementById('judul-modal-sesi').innerHTML = `<i class="fa-solid fa-pen text-indigo-600"></i> Edit Sesi Ujian`;
-          document.querySelectorAll('.chk-sesi-kelas').forEach(el => { if (sesi.kelas.includes(el.value)) el.checked = true; });
-          sesi.daftarIdSoal.forEach(id => { _daftarSoalTerpilihSesi[id] = true; });
-          muatPickerSoalSesi();
-        }).guruAmbilDetailSesi(idSesi);
-      } else {
-        muatPickerSoalSesi();
-      }
       document.getElementById('modal-form-sesi').classList.remove('hidden');
     }
 
@@ -4774,8 +4864,10 @@
         tglMulai: document.getElementById('sesi-tgl-mulai').value, jamMulai: document.getElementById('sesi-jam-mulai').value,
         tglSelesai: document.getElementById('sesi-tgl-selesai').value, jamSelesai: document.getElementById('sesi-jam-selesai').value,
         durasiMenit: document.getElementById('sesi-durasi').value, token: document.getElementById('sesi-token').value,
+        modeToken: document.getElementById('sesi-mode-token-otomatis').checked ? 'Otomatis' : 'Manual',
         acakSoal: document.getElementById('sesi-acak-soal').checked, acakOpsi: document.getElementById('sesi-acak-opsi').checked,
-        tampilkanNilai: document.getElementById('sesi-tampilkan-nilai').checked
+        tampilkanNilai: document.getElementById('sesi-tampilkan-nilai').checked,
+        sertakanRekap: document.getElementById('sesi-sertakan-rekap').checked
       };
 
       if (!data.tglMulai || !data.tglSelesai) { Swal.fire({ icon: 'warning', title: 'Lengkapi tanggal mulai & selesai' }); return; }
@@ -4807,9 +4899,12 @@
         let baris = res.daftarSiswa.map(s => `
           <tr class="border-b border-slate-100">
             <td class="p-2 text-left font-bold text-slate-700">${s.nama}<br><span class="text-[10px] text-slate-400 font-normal">${s.username}</span></td>
-            <td class="p-2 text-center">${_badgeStatusHasil(s.status)}</td>
+            <td class="p-2 text-center">${_badgeStatusHasil(s.status)}${s.status === 'Terkunci' && s.jumlahPelanggaran ? `<br><span class="text-[9px] text-slate-400">${s.jumlahPelanggaran}x keluar layar</span>` : ''}${s.catatanWaktu ? `<br><span class="text-[9px] text-amber-600 font-bold" title="${s.catatanWaktu}"><i class="fa-solid fa-clock"></i> Terlambat</span>` : ''}</td>
             <td class="p-2 text-center font-black ${s.nilaiAkhir === '-' ? 'text-slate-300' : 'text-indigo-600'}">${s.nilaiAkhir}</td>
-            <td class="p-2 text-center">${s.idHasil ? `<button onclick="bukaKoreksiJawaban('${s.idHasil}', '${s.nama.replace(/'/g, "")}', ${res.adaSoalEssay})" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100">${res.adaSoalEssay ? 'Koreksi' : 'Lihat'}</button>` : '-'}</td>
+            <td class="p-2 text-center">
+              ${s.status === 'Terkunci' ? `<button onclick="bukaKuncPelanggaran('${s.idHasil}', '${s.nama.replace(/'/g, "")}', '${idSesi}')" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-50 text-red-600 hover:bg-red-100"><i class="fa-solid fa-unlock"></i> Buka Kembali</button>` :
+                s.idHasil ? `<button onclick="bukaKoreksiJawaban('${s.idHasil}', '${s.nama.replace(/'/g, "")}', ${res.adaSoalEssay})" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100">${res.adaSoalEssay ? 'Koreksi' : 'Lihat'}</button>` : '-'}
+            </td>
           </tr>`).join('');
 
         Swal.fire({
@@ -4827,6 +4922,22 @@
           showConfirmButton: true, confirmButtonText: 'Tutup', confirmButtonColor: '#4f46e5'
         });
       }).guruAmbilRekapHasilSesi(idSesi);
+    }
+
+    function bukaKuncPelanggaran(idHasil, namaSiswa, idSesi) {
+      Swal.fire({
+        title: `Buka Kembali Ujian ${namaSiswa}?`,
+        html: `Ujian ${namaSiswa} akan dibuka kembali dengan <b>durasi penuh dari awal</b>. Jawaban yang sudah sempat diisi sebelumnya (tersimpan otomatis) tetap ada, siswa tinggal melanjutkan. Pastikan Anda sudah mengecek situasinya langsung ke siswa yang bersangkutan.`,
+        icon: 'question', showCancelButton: true, confirmButtonText: 'Ya, Buka Kembali', cancelButtonText: 'Batal', confirmButtonColor: '#dc2626'
+      }).then((result) => {
+        if (!result.isConfirmed) return;
+        google.script.run.withSuccessHandler(function(res) {
+          Swal.fire({ icon: res.status === 'SUCCESS' ? 'success' : 'error', title: res.status === 'SUCCESS' ? 'Berhasil' : 'Gagal', text: res.message, confirmButtonColor: '#4f46e5' });
+          if (res.status === 'SUCCESS') lihatRekapHasilSesi(idSesi);
+        }).withFailureHandler(function(err) {
+          Swal.fire({ icon: 'error', title: 'Gagal', text: err.message, confirmButtonColor: '#ef4444' });
+        }).guruBukaKuncPelanggaran(idHasil);
+      });
     }
 
     function _badgeStatusHasil(status) {
@@ -4853,7 +4964,7 @@
                 <input type="text" value="${(j.catatanGuru || '').replace(/"/g, '&quot;')}" class="input-catatan-essay col-span-2 p-2 border rounded-lg text-xs" data-id-soal="${j.idSoal}" placeholder="Catatan (opsional)">
               </div>`;
           } else {
-            html += `<p class="text-[11px] font-bold ${j.benar === 'TRUE' ? 'text-emerald-600' : 'text-red-500'}">${j.benar === 'TRUE' ? '✓ Benar' : '✗ Salah'} (skor: ${j.skorDidapat}/${j.poin})</p>`;
+            html += `<p class="text-[11px] font-bold ${(j.benar === 'TRUE' || j.benar === true) ? 'text-emerald-600' : 'text-red-500'}">${(j.benar === 'TRUE' || j.benar === true) ? '✓ Benar' : '✗ Salah'} (skor: ${j.skorDidapat}/${j.poin})</p>`;
           }
           html += `</div>`;
         });
@@ -4890,28 +5001,38 @@
         if (!daftar || daftar.length === 0) { area.innerHTML = `<p class="text-xs text-slate-400 text-center p-6 bg-white rounded-2xl border border-slate-200/80">Belum ada ujian CBT yang dijadwalkan untuk kelas Anda.</p>`; return; }
 
         area.innerHTML = daftar.map(s => {
-          let badge = '', tombol = '';
-          if (s.sudahDikerjakan) {
-            badge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${s.statusPengerjaan === 'Terkunci' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}">${s.statusPengerjaan === 'Terkunci' ? 'Terkunci' : 'Selesai'}</span>`;
-            tombol = `<button disabled class="text-xs font-bold px-4 py-2 rounded-xl bg-slate-100 text-slate-400 cursor-not-allowed">${s.nilaiSaya !== null ? 'Nilai: ' + s.nilaiSaya : 'Sudah Dikerjakan'}</button>`;
+          let badge = '', tombol = '', catatanTerkunci = '', aksenKiri = 'border-l-4 border-l-slate-200';
+          if (s.statusPengerjaan === 'Terkunci') {
+            badge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-600"><i class="fa-solid fa-lock"></i> Terkunci</span>`;
+            tombol = `<button disabled class="text-xs font-bold px-4 py-2 rounded-xl bg-red-50 text-red-400 cursor-not-allowed">Terkunci</button>`;
+            catatanTerkunci = `<p class="text-[11px] text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mt-2 w-full"><i class="fa-solid fa-triangle-exclamation"></i> Ujian ini terkunci otomatis karena sistem mendeteksi Anda berulang kali keluar dari layar ujian (pindah tab/aplikasi lain). Ini <b>bukan berarti Anda dinyatakan curang</b> — silakan <b>temui guru pengampu mata pelajaran ini</b> untuk menjelaskan situasinya. Guru yang akan membuka kembali ujian Anda kalau memang diperlukan.</p>`;
+            aksenKiri = 'border-l-4 border-l-red-400';
+          } else if (s.sudahDikerjakan) {
+            badge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check"></i> Sudah Dikerjakan</span>`;
+            tombol = `<button disabled class="text-xs font-bold px-4 py-2 rounded-xl bg-emerald-50 text-emerald-500 cursor-not-allowed">${s.nilaiSaya !== null ? 'Nilai: ' + s.nilaiSaya : 'Sudah Dikerjakan'}</button>`;
+            aksenKiri = 'border-l-4 border-l-emerald-400';
           } else if (s.statusWaktu === 'Terjadwal') {
-            badge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-600">Terjadwal</span>`;
+            badge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-600"><i class="fa-solid fa-clock"></i> Terjadwal</span>`;
             tombol = `<button disabled class="text-xs font-bold px-4 py-2 rounded-xl bg-slate-100 text-slate-400 cursor-not-allowed">Belum Waktunya</button>`;
+            aksenKiri = 'border-l-4 border-l-sky-300';
           } else if (s.statusWaktu === 'Selesai' || s.statusWaktu === 'Nonaktif') {
-            badge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Waktu Habis</span>`;
+            badge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500"><i class="fa-solid fa-ban"></i> Belum Dikerjakan • Waktu Habis</span>`;
             tombol = `<button disabled class="text-xs font-bold px-4 py-2 rounded-xl bg-slate-100 text-slate-400 cursor-not-allowed">Waktu Berakhir</button>`;
+            aksenKiri = 'border-l-4 border-l-slate-300';
           } else {
-            badge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 animate-pulse">Sedang Berlangsung</span>`;
-            tombol = `<button onclick="mulaiUjianSiswa('${s.id}', ${s.sedangDikerjakan})" class="text-xs font-bold px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-md shadow-emerald-100">${s.sedangDikerjakan ? 'Lanjutkan Ujian' : 'Mulai Ujian'}</button>`;
+            badge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 animate-pulse"><i class="fa-solid fa-pen"></i> Belum Dikerjakan • Bisa Dikerjakan Sekarang</span>`;
+            tombol = `<button onclick="mulaiUjianSiswa('${s.id}', ${s.sedangDikerjakan})" class="text-xs font-bold px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white transition shadow-md shadow-indigo-100">${s.sedangDikerjakan ? 'Lanjutkan Ujian' : 'Mulai Ujian'}</button>`;
+            aksenKiri = 'border-l-4 border-l-amber-400';
           }
           return `
-            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-wrap items-center justify-between gap-3">
+            <div class="bg-white p-4 sm:p-5 rounded-2xl ${aksenKiri} border-t border-r border-b border-slate-200/80 shadow-sm flex flex-wrap items-center justify-between gap-3">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-1.5 mb-1.5">${badge}<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600">${s.jenis}</span></div>
                 <p class="font-bold text-slate-800 text-sm">${s.judul}</p>
                 <p class="text-[11px] text-slate-400 mt-0.5"><i class="fa-solid fa-calendar-days"></i> ${s.tglMulai} ${s.jamMulai} - ${s.tglSelesai} ${s.jamSelesai} • <i class="fa-solid fa-clock"></i> ${s.durasiMenit} menit • <i class="fa-solid fa-list-ol"></i> ${s.jumlahSoal} soal</p>
               </div>
               <div class="shrink-0">${tombol}</div>
+              ${catatanTerkunci}
             </div>`;
         }).join('');
       }).siswaAmbilDaftarUjianTersedia(userProfile.kelas, userProfile.username);
@@ -4941,12 +5062,19 @@
       _sesiUjianAktif = res;
       _sesiUjianAktif.idSesi = idSesi;
       _soalUjianAktif = res.soal;
-      _jawabanUjianAktif = {};
       _raguRaguUjianAktif = {};
       _nomorSoalAktif = 0;
       _epochBatasAkhirUjian = res.epochBatasAkhir;
       _pelanggaranTerkirim = false;
       _sudahMengumpulkanUjian = false;
+
+      // Pulihkan progres jawaban yang sudah tersimpan otomatis (kalau ujian ini sedang dilanjutkan/resume)
+      _jawabanUjianAktif = {};
+      var jawabanTersimpan = res.jawabanTersimpan || {};
+      _soalUjianAktif.forEach(function(soal) {
+        if (typeof jawabanTersimpan[soal.id] === 'undefined' || jawabanTersimpan[soal.id] === '') return;
+        _jawabanUjianAktif[soal.id] = soal.tipe === 'PGK' ? jawabanTersimpan[soal.id].split(',').filter(Boolean) : jawabanTersimpan[soal.id];
+      });
 
       document.getElementById('runner-judul-ujian').innerText = res.judul;
       document.getElementById('runner-nama-siswa').innerText = userProfile.nama + ' • ' + userProfile.kelas;
@@ -4967,12 +5095,29 @@
       if (document.hidden && !_sudahMengumpulkanUjian && _sesiUjianAktif) {
         google.script.run.withSuccessHandler(function(res) {
           if (res.terkunci) {
-            _selesaikanUjian(true);
+            _terkunciKarenaPelanggaran();
           } else {
             Swal.fire({ icon: 'warning', title: 'Peringatan!', text: `Terdeteksi Anda meninggalkan layar ujian (${res.jumlahPelanggaran}/${res.batasMaks}). Ujian akan dikunci otomatis jika mencapai batas.`, confirmButtonColor: '#d97706' });
           }
         }).siswaLaporPelanggaran(_sesiUjianAktif.idHasil);
       }
+    }
+
+    // Dipanggil saat pelanggaran mencapai batas maksimal. TIDAK mengirim jawaban/menilai —
+    // status di server sudah otomatis jadi "Terkunci" oleh siswaLaporPelanggaran. Guru yang
+    // akan membuka kembali lewat menu Rekap Hasil kalau memang diperlukan.
+    function _terkunciKarenaPelanggaran() {
+      if (_sudahMengumpulkanUjian) return;
+      _sudahMengumpulkanUjian = true;
+      clearInterval(_timerIntervalUjian);
+      document.removeEventListener('visibilitychange', _handleVisibilitasUjian);
+      if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); }
+      document.getElementById('runner-ujian').classList.add('hidden');
+      Swal.fire({
+        icon: 'error', title: 'Ujian Dikunci',
+        html: `Ujian ini dikunci otomatis karena sistem mendeteksi Anda berulang kali keluar dari layar ujian (pindah tab/aplikasi lain).<br><br>Ini <b>bukan berarti Anda otomatis dinyatakan curang</b> — jawaban Anda <b>belum dinilai</b>. Silakan <b>temui guru pengampu</b> untuk menjelaskan situasinya. Guru yang akan membuka kembali ujian ini kalau memang diperlukan.`,
+        confirmButtonText: 'Mengerti', confirmButtonColor: '#dc2626', allowOutsideClick: false, allowEscapeKey: false
+      }).then(() => { muatDaftarUjianSiswa(); });
     }
 
     function _renderPaletNomorSoal() {
@@ -5005,9 +5150,12 @@
       else { btn.classList.remove('bg-amber-400', 'text-white'); btn.classList.add('bg-white', 'text-amber-600'); btn.innerHTML = `<i class="fa-regular fa-flag"></i> Tandai Ragu-ragu`; }
     }
 
-    function _simpanJawabanSoalAktif() {
+    let _debounceAutosaveTeks = null;
+
+    function _simpanJawabanSoalAktif(debounceUntukTeks) {
       const soal = _soalUjianAktif[_nomorSoalAktif];
       if (!soal) return;
+      const jawabanLama = _jawabanUjianAktif[soal.id];
       if (soal.tipe === 'PG') {
         const dipilih = document.querySelector('input[name="runner-jawaban-radio"]:checked');
         _jawabanUjianAktif[soal.id] = dipilih ? dipilih.value : '';
@@ -5017,6 +5165,19 @@
       } else {
         const el = document.getElementById('runner-input-jawaban-teks');
         _jawabanUjianAktif[soal.id] = el ? el.value : '';
+      }
+      // Autosave ke server — hanya kalau jawabannya benar-benar berubah, supaya tidak spam request.
+      // Untuk Isian/Essay (mengetik tiap huruf), autosave di-debounce 1.5 detik setelah berhenti mengetik.
+      const jawabanBaru = _jawabanUjianAktif[soal.id];
+      const berubah = JSON.stringify(jawabanLama || (Array.isArray(jawabanBaru) ? [] : '')) !== JSON.stringify(jawabanBaru);
+      if (!berubah || !_sesiUjianAktif || _sudahMengumpulkanUjian) return;
+
+      const kirimAutosave = () => google.script.run.siswaSimpanJawabanOtomatis(_sesiUjianAktif.idHasil, _sesiUjianAktif.idSesi, userProfile.username, soal.id, jawabanBaru);
+      if (debounceUntukTeks) {
+        clearTimeout(_debounceAutosaveTeks);
+        _debounceAutosaveTeks = setTimeout(kirimAutosave, 1500);
+      } else {
+        kirimAutosave();
       }
     }
 
@@ -5043,9 +5204,9 @@
             <span class="text-sm text-slate-700"><b>${o.label}.</b> ${o.teks}</span>
           </label>`).join('') + `<p class="text-[10px] text-slate-400 mt-1"><i class="fa-solid fa-circle-info"></i> Bisa lebih dari satu jawaban benar.</p>`;
       } else if (soal.tipe === 'Isian') {
-        area.innerHTML = `<input type="text" id="runner-input-jawaban-teks" value="${(jawabanTersimpan || '').toString().replace(/"/g, '&quot;')}" placeholder="Ketik jawaban Anda..." class="w-full p-3 border-2 border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500" oninput="_simpanJawabanSoalAktif()">`;
+        area.innerHTML = `<input type="text" id="runner-input-jawaban-teks" value="${(jawabanTersimpan || '').toString().replace(/"/g, '&quot;')}" placeholder="Ketik jawaban Anda..." class="w-full p-3 border-2 border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500" oninput="_simpanJawabanSoalAktif(true)">`;
       } else {
-        area.innerHTML = `<textarea id="runner-input-jawaban-teks" rows="6" placeholder="Tulis jawaban uraian Anda di sini..." class="w-full p-3 border-2 border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500" oninput="_simpanJawabanSoalAktif()">${(jawabanTersimpan || '').toString()}</textarea>`;
+        area.innerHTML = `<textarea id="runner-input-jawaban-teks" rows="6" placeholder="Tulis jawaban uraian Anda di sini..." class="w-full p-3 border-2 border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500" oninput="_simpanJawabanSoalAktif(true)">${(jawabanTersimpan || '').toString()}</textarea>`;
       }
 
       _perbaruiTombolRagu();
@@ -5089,10 +5250,10 @@
         title: 'Selesaikan ujian?', icon: 'question',
         html: `Anda sudah menjawab <b>${terjawab} dari ${totalSoal}</b> soal.<br>Jawaban tidak dapat diubah lagi setelah dikumpulkan.`,
         showCancelButton: true, confirmButtonText: 'Ya, Kumpulkan', cancelButtonText: 'Periksa Lagi', confirmButtonColor: '#059669'
-      }).then(r => { if (r.isConfirmed) _selesaikanUjian(false); });
+      }).then(r => { if (r.isConfirmed) _selesaikanUjian(); });
     }
 
-    function _selesaikanUjian(karenaPelanggaran) {
+    function _selesaikanUjian() {
       if (_sudahMengumpulkanUjian) return;
       _sudahMengumpulkanUjian = true;
       clearInterval(_timerIntervalUjian);
@@ -5107,13 +5268,13 @@
         if (res.status !== 'SUCCESS') { Swal.fire({ icon: 'error', title: 'Gagal', text: res.message }); muatDaftarUjianSiswa(); return; }
         let pesanNilai = res.tampilkanNilai ? `Nilai Anda: <b class="text-emerald-600 text-lg">${res.nilaiSementara}</b>` : 'Nilai akan diumumkan oleh guru setelah dikoreksi.';
         if (res.adaEssay) pesanNilai += '<br><span class="text-xs text-slate-400">(Sebagian nilai dari soal Essay masih menunggu koreksi guru)</span>';
-        Swal.fire({ icon: karenaPelanggaran ? 'error' : 'success', title: karenaPelanggaran ? 'Ujian Dikunci' : 'Ujian Selesai', html: pesanNilai });
+        Swal.fire({ icon: 'success', title: 'Ujian Selesai', html: pesanNilai });
         muatDaftarUjianSiswa();
       }).withFailureHandler(function(err) {
         document.getElementById('runner-ujian').classList.add('hidden');
         Swal.fire({ icon: 'error', title: 'Gagal mengirim', text: err.message });
         muatDaftarUjianSiswa();
-      }).siswaSubmitUjian(_sesiUjianAktif.idHasil, _sesiUjianAktif.idSesi, userProfile.username, jawabanArray, karenaPelanggaran);
+      }).siswaSubmitUjian(_sesiUjianAktif.idHasil, _sesiUjianAktif.idSesi, userProfile.username, jawabanArray, false);
     }
 
 
