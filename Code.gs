@@ -910,9 +910,30 @@ function ambilRekapPresensiUntukExport(bulanFilter, kelasFilter) {
 var FOLDER_ID_MATERI = "1UMYqd45VZ9mxjXZ3IvM2IivBrKpSBc-f";
 var FOLDER_ID_TUGAS = "1Otf_a2gBs6u3UdNjHCTyQFWTtnhn8S44";
 
+/**
+ * Folder khusus gambar Bank Soal dibuat otomatis sekali saja (di root Drive akun pemilik script),
+ * lalu ID-nya disimpan permanen di Script Properties supaya panggilan berikutnya memakai folder yang sama
+ * (tidak membuat folder baru berulang-ulang).
+ */
+function _pastikanFolderGambarSoal() {
+  var props = PropertiesService.getScriptProperties();
+  var idTersimpan = props.getProperty("FOLDER_ID_GAMBAR_SOAL");
+  if (idTersimpan) {
+    try {
+      var folderCek = DriveApp.getFolderById(idTersimpan); // pastikan folder masih ada & belum dihapus manual
+      return folderCek.getId();
+    } catch (errCek) {
+      // Folder tersimpan sudah tidak valid (mis. dihapus manual) — buat ulang di bawah ini
+    }
+  }
+  var folderBaru = DriveApp.createFolder("SmartSchool - Gambar Bank Soal");
+  props.setProperty("FOLDER_ID_GAMBAR_SOAL", folderBaru.getId());
+  return folderBaru.getId();
+}
+
 function uploadFileKeDrive(base64Data, namaFile, mimeType, jenisUpload) {
   try {
-    var idFolder = (jenisUpload === "Tugas") ? FOLDER_ID_TUGAS : FOLDER_ID_MATERI;
+    var idFolder = (jenisUpload === "Tugas") ? FOLDER_ID_TUGAS : (jenisUpload === "Soal") ? _pastikanFolderGambarSoal() : FOLDER_ID_MATERI;
     var folder = DriveApp.getFolderById(idFolder);
 
     var decoded = Utilities.base64Decode(base64Data);
@@ -932,14 +953,16 @@ function uploadFileKeDrive(base64Data, namaFile, mimeType, jenisUpload) {
       }
     }
     
-    return { status: "SUCCESS", url: file.getUrl(), namaFile: namaFile };
+    return { status: "SUCCESS", url: file.getUrl(), urlGambar: "https://drive.google.com/thumbnail?id=" + file.getId() + "&sz=w2000", namaFile: namaFile };
   } catch (err) {
     return { status: "ERROR", message: "Gagal mengunggah file: " + err.message };
   }
 }
 
+var _idUnikCounter = 0;
 function _buatIdUnik(prefix) {
-  return prefix + "-" + new Date().getTime() + "-" + Math.floor(Math.random() * 1000);
+  _idUnikCounter = (_idUnikCounter + 1) % 1000000;
+  return prefix + "-" + new Date().getTime() + "-" + Math.floor(Math.random() * 1000) + "-" + _idUnikCounter;
 }
 
 // ---------- MATERI ----------
@@ -2767,6 +2790,7 @@ function _dataCBTUntukRekap(guruUsername, kelas, mapel) {
     var idSesiBaris = dataHasil[h][1].toString();
     if (!idSesiValid[idSesiBaris]) continue;
     if (dataHasil[h][10].toString() !== "Selesai") continue;
+    if (dataHasil[h][8].toString() === "Menunggu") continue; // Soal Essay belum dikoreksi guru — jangan masuk rekap dulu, nilainya belum final
     var key = _normalisasiUsername(dataHasil[h][2]);
     var nilai = Number(dataHasil[h][9]) || 0;
     if (!nilaiPerSesi[key]) nilaiPerSesi[key] = {};
@@ -3012,7 +3036,7 @@ function aiAnalisisRekapKelas(guruUsername, kelas) {
 // ==================== MODUL BANK SOAL (GURU) ====================
 // Gudang soal milik guru: tidak terikat waktu ujian, bisa dipakai ulang di banyak sesi CBT berbeda.
 
-var HEADER_BANK_SOAL = ["ID Soal", "Guru Username", "Guru Nama", "Mapel", "Kelas", "Topik/Bab", "Tipe Soal", "Pertanyaan", "Opsi A", "Opsi B", "Opsi C", "Opsi D", "Opsi E", "Kunci Jawaban", "Poin", "Level Kognitif", "Timestamp"];
+var HEADER_BANK_SOAL = ["ID Soal", "Guru Username", "Guru Nama", "Mapel", "Kelas", "Topik/Bab", "Tipe Soal", "Pertanyaan", "Opsi A", "Opsi B", "Opsi C", "Opsi D", "Opsi E", "Kunci Jawaban", "Poin", "Level Kognitif", "Timestamp", "Gambar URL"];
 
 function _pastikanSheetBankSoalBenar() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -3044,7 +3068,8 @@ function _baris2Soal(row) {
     kunci: row[13].toString(),
     poin: Number(row[14]) || 0,
     levelKognitif: row[15] ? row[15].toString() : "",
-    timestamp: row[16] ? row[16].toString() : ""
+    timestamp: row[16] ? row[16].toString() : "",
+    gambarUrl: row[17] ? row[17].toString() : ""
   };
 }
 
@@ -3056,13 +3081,13 @@ function _baris2Soal(row) {
 function guruImportSoalMassal(guruUsername, guruNama, mapel, daftarSoal) {
   var sheet = _pastikanSheetBankSoalBenar();
   var waktu = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
-  var barisBaru = daftarSoal.map(function(data) {
+  var barisBaru = daftarSoal.map(function(data, idx) {
     var opsi = data.opsi || [];
     return [
-      _buatIdUnik("SOAL"), guruUsername, guruNama, mapel || "", data.kelas || "", data.topik || "",
+      _buatIdUnik("SOAL") + "-" + idx, guruUsername, guruNama, mapel || "", data.kelas || "", data.topik || "",
       data.tipe, data.pertanyaan,
       opsi[0] || "", opsi[1] || "", opsi[2] || "", opsi[3] || "", opsi[4] || "",
-      (data.kunci || "").toString(), Number(data.poin) || 0, data.levelKognitif || "", waktu
+      (data.kunci || "").toString(), Number(data.poin) || 0, data.levelKognitif || "", waktu, data.gambarUrl || ""
     ];
   });
 
@@ -3082,7 +3107,7 @@ function guruSimpanSoal(data) {
     "", data.guruUsername, data.guruNama, data.mapel, data.kelas, data.topik || "",
     data.tipe, data.pertanyaan,
     opsi[0] || "", opsi[1] || "", opsi[2] || "", opsi[3] || "", opsi[4] || "",
-    (data.kunci || "").toString(), Number(data.poin) || 0, data.levelKognitif || "", waktu
+    (data.kunci || "").toString(), Number(data.poin) || 0, data.levelKognitif || "", waktu, data.gambarUrl || ""
   ];
 
   if (data.idEdit) {
@@ -3188,7 +3213,7 @@ function aiBantuBuatSoal(topik, mapel, tipe) {
 // ==================== MODUL CBT / UJIAN TERJADWAL ====================
 // Sesi ujian mengambil soal dari Bank Soal, punya jadwal, durasi, token, dan kelas peserta sendiri.
 
-var HEADER_CBT_SESI = ["ID Sesi", "Guru Username", "Guru Nama", "Judul Ujian", "Jenis Ujian", "Mapel", "Kelas", "Daftar ID Soal", "Tanggal Mulai", "Jam Mulai", "Tanggal Selesai", "Jam Selesai", "Durasi Menit", "Token", "Acak Soal", "Acak Opsi", "Tampilkan Nilai", "Status", "Timestamp", "Mode Token", "Sertakan Rekap"];
+var HEADER_CBT_SESI = ["ID Sesi", "Guru Username", "Guru Nama", "Judul Ujian", "Jenis Ujian", "Mapel", "Kelas", "Daftar ID Soal", "Tanggal Mulai", "Jam Mulai", "Tanggal Selesai", "Jam Selesai", "Durasi Menit", "Token", "Acak Soal", "Acak Opsi", "Tampilkan Nilai", "Status", "Timestamp", "Mode Token", "Sertakan Rekap", "Tampilkan Review"];
 
 function _pastikanSheetCbtSesiBenar() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -3201,6 +3226,7 @@ function _pastikanSheetCbtSesiBenar() {
   var headerSaatIni = sheet.getRange(1, 1, 1, HEADER_CBT_SESI.length).getValues()[0];
   if (!headerSaatIni[19]) sheet.getRange(1, 20).setValue("Mode Token"); // Migrasi: tambah kolom baru tanpa mengubah yang lama
   if (!headerSaatIni[20]) sheet.getRange(1, 21).setValue("Sertakan Rekap");
+  if (!headerSaatIni[21]) sheet.getRange(1, 22).setValue("Tampilkan Review");
   return sheet;
 }
 
@@ -3309,7 +3335,8 @@ function _baris2Sesi(row) {
     statusManual: row[17] ? row[17].toString() : "Aktif",
     timestamp: row[18] ? row[18].toString() : "",
     modeToken: row[19] ? row[19].toString() : "Manual",
-    sertakanRekap: row[20] ? row[20].toString() !== "FALSE" : true // Default TRUE untuk sesi lama sebelum fitur ini ada
+    sertakanRekap: row[20] ? row[20].toString() !== "FALSE" : true, // Default TRUE untuk sesi lama sebelum fitur ini ada
+    tampilkanReview: row.length > 21 && (row[21] === true || row[21].toString().toUpperCase() === "TRUE")
   };
 }
 
@@ -3326,6 +3353,7 @@ function _statusWaktuSesi(sesi) {
 /** data: {guruUsername,guruNama,judul,jenis,mapel,kelasArray,daftarIdSoal,tglMulai,jamMulai,tglSelesai,jamSelesai,durasiMenit,token,modeToken,acakSoal,acakOpsi,tampilkanNilai} */
 function guruBuatSesiUjian(data) {
   if (!data.daftarIdSoal || data.daftarIdSoal.length === 0) return { status: "ERROR", message: "Pilih minimal satu soal dari Bank Soal untuk sesi ini." };
+  data.daftarIdSoal = data.daftarIdSoal.filter(function(v, i, arr) { return arr.indexOf(v) === i; });
   if (!data.kelasArray || data.kelasArray.length === 0) return { status: "ERROR", message: "Pilih minimal satu kelas peserta." };
 
   var sheet = _pastikanSheetCbtSesiBenar();
@@ -3340,7 +3368,7 @@ function guruBuatSesiUjian(data) {
     data.tglMulai, data.jamMulai, data.tglSelesai, data.jamSelesai,
     Number(data.durasiMenit) || 0, token,
     data.acakSoal ? "TRUE" : "FALSE", data.acakOpsi ? "TRUE" : "FALSE", data.tampilkanNilai ? "TRUE" : "FALSE",
-    "Aktif", waktu, modeToken, data.sertakanRekap === false ? "FALSE" : "TRUE"
+    "Aktif", waktu, modeToken, data.sertakanRekap === false ? "FALSE" : "TRUE", data.tampilkanReview ? "TRUE" : "FALSE"
   ]);
   var barisTerakhir = sheet.getLastRow();
   sheet.getRange(barisTerakhir, 9).setNumberFormat("@").setValue(data.tglMulai);
@@ -3352,6 +3380,7 @@ function guruBuatSesiUjian(data) {
   sheet.getRange(barisTerakhir, 16).setNumberFormat("@").setValue(data.acakOpsi ? "TRUE" : "FALSE");
   sheet.getRange(barisTerakhir, 17).setNumberFormat("@").setValue(data.tampilkanNilai ? "TRUE" : "FALSE");
   sheet.getRange(barisTerakhir, 21).setNumberFormat("@").setValue(data.sertakanRekap === false ? "FALSE" : "TRUE");
+  sheet.getRange(barisTerakhir, 22).setNumberFormat("@").setValue(data.tampilkanReview ? "TRUE" : "FALSE");
 
   catatLogAktivitas(data.guruNama, "Buat Sesi CBT", "Membuat sesi ujian \"" + data.judul + "\" untuk kelas " + data.kelasArray.join(", "));
   var pesanToken = modeToken === "Otomatis" ? "Token otomatis berganti tiap 10 menit, lihat di daftar sesi." : "Token: " + token;
@@ -3374,7 +3403,7 @@ function guruDuplikatSesiRemedial(idSesi) {
     sesiAsli.kelas.join(","), sesiAsli.daftarIdSoal.join(","),
     hariIni, "07:00", hariIni, "23:59",
     sesiAsli.durasiMenit, token, "FALSE", "FALSE", "TRUE",
-    "Aktif", waktu, "Manual", "TRUE"
+    "Aktif", waktu, "Manual", "TRUE", sesiAsli.tampilkanReview ? "TRUE" : "FALSE"
   ]);
   var barisTerakhir = sheet.getLastRow();
   sheet.getRange(barisTerakhir, 9).setNumberFormat("@").setValue(hariIni);
@@ -3383,6 +3412,7 @@ function guruDuplikatSesiRemedial(idSesi) {
   sheet.getRange(barisTerakhir, 16).setNumberFormat("@").setValue("FALSE");
   sheet.getRange(barisTerakhir, 17).setNumberFormat("@").setValue("TRUE");
   sheet.getRange(barisTerakhir, 21).setNumberFormat("@").setValue("TRUE");
+  sheet.getRange(barisTerakhir, 22).setNumberFormat("@").setValue(sesiAsli.tampilkanReview ? "TRUE" : "FALSE");
   sheet.getRange(barisTerakhir, 11).setNumberFormat("@").setValue(hariIni);
   sheet.getRange(barisTerakhir, 12).setNumberFormat("@").setValue("23:59");
 
@@ -3392,6 +3422,7 @@ function guruDuplikatSesiRemedial(idSesi) {
 
 function guruEditSesiUjian(idSesi, data) {
   if (!data.daftarIdSoal || data.daftarIdSoal.length === 0) return { status: "ERROR", message: "Pilih minimal satu soal dari Bank Soal untuk sesi ini." };
+  data.daftarIdSoal = data.daftarIdSoal.filter(function(v, i, arr) { return arr.indexOf(v) === i; });
   if (!data.kelasArray || data.kelasArray.length === 0) return { status: "ERROR", message: "Pilih minimal satu kelas peserta." };
 
   var sheet = _pastikanSheetCbtSesiBenar();
@@ -3406,7 +3437,7 @@ function guruEditSesiUjian(idSesi, data) {
         data.tglMulai, data.jamMulai, data.tglSelesai, data.jamSelesai,
         Number(data.durasiMenit) || 0, token,
         data.acakSoal ? "TRUE" : "FALSE", data.acakOpsi ? "TRUE" : "FALSE", data.tampilkanNilai ? "TRUE" : "FALSE",
-        dataSheet[i][17], dataSheet[i][18], modeToken, data.sertakanRekap === false ? "FALSE" : "TRUE"
+        dataSheet[i][17], dataSheet[i][18], modeToken, data.sertakanRekap === false ? "FALSE" : "TRUE", data.tampilkanReview ? "TRUE" : "FALSE"
       ];
       sheet.getRange(i + 1, 1, 1, baris.length).setValues([baris]);
       sheet.getRange(i + 1, 9).setNumberFormat("@").setValue(data.tglMulai);
@@ -3417,6 +3448,7 @@ function guruEditSesiUjian(idSesi, data) {
       sheet.getRange(i + 1, 16).setNumberFormat("@").setValue(data.acakOpsi ? "TRUE" : "FALSE");
       sheet.getRange(i + 1, 17).setNumberFormat("@").setValue(data.tampilkanNilai ? "TRUE" : "FALSE");
       sheet.getRange(i + 1, 21).setNumberFormat("@").setValue(data.sertakanRekap === false ? "FALSE" : "TRUE");
+      sheet.getRange(i + 1, 22).setNumberFormat("@").setValue(data.tampilkanReview ? "TRUE" : "FALSE");
       return { status: "SUCCESS", message: "Sesi ujian berhasil diperbarui." };
     }
   }
@@ -3527,7 +3559,7 @@ function siswaAmbilDaftarUjianTersedia(kelasSiswa, usernameSiswa) {
       // Kalau ada baris duplikat (data lama dari sebelum diperbaiki), prioritaskan status FINAL
       // (Selesai/Terkunci) — jangan sampai baris "Sedang Mengerjakan" yang lebih baru menimpa hasil yang sudah final.
       if (yangSudahAda && (yangSudahAda.status === "Selesai" || yangSudahAda.status === "Terkunci")) continue;
-      petaHasil[idSesiBaris] = { status: statusBaris, nilaiAkhir: dataHasil[h][9] };
+      petaHasil[idSesiBaris] = { status: statusBaris, nilaiAkhir: dataHasil[h][9], idHasil: dataHasil[h][0].toString() };
     }
   }
 
@@ -3544,7 +3576,8 @@ function siswaAmbilDaftarUjianTersedia(kelasSiswa, usernameSiswa) {
     sesi.sudahDikerjakan = !!hasilSiswa && (hasilSiswa.status === "Selesai" || hasilSiswa.status === "Terkunci");
     sesi.sedangDikerjakan = !!hasilSiswa && hasilSiswa.status === "Sedang Mengerjakan";
     sesi.statusPengerjaan = hasilSiswa ? hasilSiswa.status : "";
-    sesi.nilaiSaya = sesi.sudahDikerjakan ? hasilSiswa.nilaiAkhir : null;
+    sesi.nilaiSaya = sesi.sudahDikerjakan ? (sesi.tampilkanNilai ? hasilSiswa.nilaiAkhir : null) : null;
+    sesi.idHasilSaya = hasilSiswa ? hasilSiswa.idHasil : "";
     delete sesi.daftarIdSoal;
     delete sesi.token;
     hasil.push(sesi);
@@ -3624,7 +3657,7 @@ function siswaMulaiUjian(idSesi, tokenInput, usernameSiswa, namaSiswa, kelasSisw
     var opsiBerlabel = [];
     soal.opsi.forEach(function(teks, idx) { if (teks) opsiBerlabel.push({ label: labelHuruf[idx], teks: teks }); });
     if (sesi.acakOpsi && (soal.tipe === "PG" || soal.tipe === "PGK")) opsiBerlabel = _kocokArray(opsiBerlabel);
-    soalUntukSiswa.push({ id: soal.id, tipe: soal.tipe, pertanyaan: soal.pertanyaan, opsi: opsiBerlabel, poin: soal.poin });
+    soalUntukSiswa.push({ id: soal.id, tipe: soal.tipe, pertanyaan: soal.pertanyaan, opsi: opsiBerlabel, poin: soal.poin, gambarUrl: soal.gambarUrl || "" });
   });
 
   // Sisa waktu dihitung dari waktu mulai TERSIMPAN di server (bukan waktu klik saat itu),
@@ -3636,6 +3669,7 @@ function siswaMulaiUjian(idSesi, tokenInput, usernameSiswa, namaSiswa, kelasSisw
 
   return {
     status: "SUCCESS", idHasil: idHasil, judul: sesi.judul, jenis: sesi.jenis, mapel: sesi.mapel,
+    acakOpsi: sesi.acakOpsi,
     soal: soalUntukSiswa, epochMulai: epochMulai, epochBatasAkhir: epochBatasAkhir, epochSekarang: new Date().getTime(),
     jawabanTersimpan: sudahAda ? _siswaAmbilJawabanTersimpan(idHasil) : {}
   };
@@ -3736,6 +3770,9 @@ function siswaSubmitUjian(idHasil, idSesi, usernameSiswa, jawabanArray, paksaKar
       var jawabSet = jawabanTeks.split(",").map(function(x) { return x.trim().toUpperCase(); }).filter(Boolean).sort();
       var kunciSet = soal.kunci.split(",").map(function(x) { return x.trim().toUpperCase(); }).filter(Boolean).sort();
       benar = (jawabSet.length > 0 && jawabSet.join(",") === kunciSet.join(",")) ? "TRUE" : "FALSE";
+      if (benar === "TRUE") skorSoal = soal.poin;
+    } else if (soal.tipe === "BS") {
+      benar = (jawabanTeks.trim().toLowerCase() === soal.kunci.trim().toLowerCase() && jawabanTeks.trim() !== "") ? "TRUE" : "FALSE";
       if (benar === "TRUE") skorSoal = soal.poin;
     } else if (soal.tipe === "Isian") {
       benar = (jawabanTeks.trim().toLowerCase() === soal.kunci.trim().toLowerCase() && jawabanTeks.trim() !== "") ? "TRUE" : "FALSE";
@@ -3939,7 +3976,7 @@ function guruAmbilDetailJawabanSiswa(idHasil) {
     var soal = petaSoal[dataJawaban[i][3].toString()];
     if (!soal) continue;
     hasil.push({
-      idSoal: soal.id, tipe: soal.tipe, pertanyaan: soal.pertanyaan, opsi: soal.opsi, kunci: soal.kunci, poin: soal.poin,
+      idSoal: soal.id, tipe: soal.tipe, pertanyaan: soal.pertanyaan, opsi: soal.opsi, kunci: soal.kunci, poin: soal.poin, gambarUrl: soal.gambarUrl || "",
       jawabanSiswa: dataJawaban[i][4].toString(), benar: dataJawaban[i][5].toString(),
       skorDidapat: Number(dataJawaban[i][6]) || 0, catatanGuru: dataJawaban[i][7] ? dataJawaban[i][7].toString() : ""
     });
@@ -3948,6 +3985,49 @@ function guruAmbilDetailJawabanSiswa(idHasil) {
 }
 
 /** Guru menyimpan nilai Essay (per soal) untuk satu siswa, lalu Nilai Akhir dihitung ulang otomatis */
+/**
+ * Review hasil pengerjaan untuk SISWA sendiri (benar/salah per soal + kunci jawaban).
+ * Hanya diizinkan kalau: (1) idHasil memang milik usernameSiswa yang login, (2) status ujian sudah
+ * final (Selesai/Terkunci), dan (3) guru mengaktifkan "Tampilkan Review" di pengaturan sesi.
+ * Soal Essay tidak ditampilkan status benar/salah (karena sifatnya subjektif), hanya jawaban & skor kalau sudah dikoreksi.
+ */
+function siswaAmbilReviewHasil(idHasil, usernameSiswa) {
+  var sheetHasil = _pastikanSheetHasilUjianBenar();
+  var dataHasil = sheetHasil.getDataRange().getValues();
+  var baris = null;
+  for (var i = 1; i < dataHasil.length; i++) {
+    if (dataHasil[i][0].toString() === idHasil.toString()) { baris = dataHasil[i]; break; }
+  }
+  if (!baris) return { status: "ERROR", message: "Data hasil ujian tidak ditemukan." };
+  if (_normalisasiUsername(baris[2]) !== _normalisasiUsername(usernameSiswa)) return { status: "ERROR", message: "Anda tidak berhak melihat hasil ujian ini." };
+  var status = baris[10].toString();
+  if (status !== "Selesai" && status !== "Terkunci") return { status: "ERROR", message: "Ujian belum selesai dikerjakan." };
+
+  var idSesi = baris[1].toString();
+  var sesi = guruAmbilDetailSesi(idSesi);
+  if (!sesi) return { status: "ERROR", message: "Sesi ujian tidak ditemukan." };
+  if (!sesi.tampilkanReview) return { status: "ERROR", message: "Guru belum mengizinkan siswa melihat review hasil pengerjaan untuk ujian ini." };
+
+  var jawabanDetail = guruAmbilDetailJawabanSiswa(idHasil);
+  var HURUF_LABEL = ["A", "B", "C", "D", "E"];
+  var soalUntukReview = jawabanDetail.map(function(j) {
+    var opsiBerlabel = (j.opsi || []).map(function(teks, idx) { return { label: HURUF_LABEL[idx], teks: teks }; }).filter(function(o) { return o.teks !== ""; });
+    return {
+      tipe: j.tipe, pertanyaan: j.pertanyaan, opsi: opsiBerlabel, gambarUrl: j.gambarUrl,
+      jawabanSiswa: j.jawabanSiswa,
+      kunci: j.tipe === "Essay" ? "" : j.kunci,
+      benar: j.tipe === "Essay" ? null : (j.benar === "TRUE"),
+      poin: j.poin, skorDidapat: j.skorDidapat
+    };
+  });
+
+  return {
+    status: "SUCCESS", judul: sesi.judul, jenis: sesi.jenis, mapel: sesi.mapel,
+    nilaiAkhir: sesi.tampilkanNilai ? baris[9] : null,
+    soal: soalUntukReview
+  };
+}
+
 function guruSimpanKoreksiEssay(idHasil, koreksiArray) {
   var sheetJawaban = _pastikanSheetJawabanSiswaBenar();
   var dataJawaban = sheetJawaban.getDataRange().getValues();
@@ -3996,7 +4076,8 @@ function _siswaAmbilNilaiUjianSaya(usernameSiswa, kelasSiswa) {
   var petaSesi = {};
   for (var s = 1; s < dataSesi.length; s++) {
     if (!dataSesi[s][0]) continue;
-    petaSesi[dataSesi[s][0].toString()] = { judul: dataSesi[s][3].toString(), jenis: dataSesi[s][4].toString(), mapel: dataSesi[s][5].toString() };
+    var sesiBaris = _baris2Sesi(dataSesi[s]);
+    petaSesi[sesiBaris.id] = { judul: sesiBaris.judul, jenis: sesiBaris.jenis, mapel: sesiBaris.mapel, tampilkanNilai: sesiBaris.tampilkanNilai };
   }
 
   var hasil = [];
@@ -4005,8 +4086,8 @@ function _siswaAmbilNilaiUjianSaya(usernameSiswa, kelasSiswa) {
     if (dataHasil[i][2].toString().trim() !== usernameSiswa.toString().trim()) continue;
     var status = dataHasil[i][10].toString();
     if (status !== "Selesai" && status !== "Terkunci") continue;
-    var info = petaSesi[dataHasil[i][1].toString()] || { judul: "Ujian", jenis: "", mapel: "" };
-    hasil.push({ judul: info.judul, jenis: info.jenis, mapel: info.mapel, nilaiAkhir: dataHasil[i][9], status: status });
+    var info = petaSesi[dataHasil[i][1].toString()] || { judul: "Ujian", jenis: "", mapel: "", tampilkanNilai: true };
+    hasil.push({ judul: info.judul, jenis: info.jenis, mapel: info.mapel, nilaiAkhir: info.tampilkanNilai ? dataHasil[i][9] : "-", status: status });
   }
   return hasil;
 }
