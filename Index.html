@@ -1545,7 +1545,6 @@
     </div>
 
     <div id="runner-ujian" class="hidden fixed inset-0 bg-slate-100 z-[200] flex flex-col zona-anti-screenshot" oncontextmenu="return false;" oncopy="return false;">
-      <div id="watermark-runner-ujian" class="watermark-anti-bocor"></div>
       <!-- Header ujian: judul, sisa waktu, tombol selesai -->
       <div class="bg-[#1B1F27] text-white px-4 sm:px-6 py-3 flex items-center justify-between shrink-0 shadow-lg">
         <div class="min-w-0">
@@ -6052,17 +6051,131 @@
       const res = _cacheRekapHasilSesi;
       const idSesi = _idSesiRekapAktif;
       const daftar = (!kelasFilter) ? res.daftarSiswa : res.daftarSiswa.filter(s => s.kelas === kelasFilter);
-      if (daftar.length === 0) return `<tr><td colspan="4" class="p-4 text-center text-slate-400">Tidak ada siswa di kelas ini.</td></tr>`;
-      return daftar.map(s => `
+      const kolomPembanding = res.iniSesiRemedial || res.adaSesiRemedial;
+      const colspan = 4 + (kolomPembanding ? 1 : 0) + (res.adaSesiRemedial ? 1 : 0);
+      if (daftar.length === 0) return `<tr><td colspan="${colspan}" class="p-4 text-center text-slate-400">Tidak ada siswa di kelas ini.</td></tr>`;
+      return daftar.map(s => {
+        const namaAman = s.nama.replace(/'/g, "");
+        let selEdit = '-';
+        if (s.status === 'Terkunci') {
+          selEdit = `<button onclick="bukaKuncPelanggaran('${s.idHasil}', '${namaAman}', '${idSesi}')" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-50 text-red-600 hover:bg-red-100"><i class="fa-solid fa-unlock"></i> Buka Kembali</button>`;
+        } else if (s.idHasil) {
+          selEdit = `<button onclick="bukaKoreksiJawaban('${s.idHasil}', '${namaAman}', ${res.adaSoalEssay})" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100">${res.adaSoalEssay ? 'Koreksi' : 'Lihat'}</button>`;
+        }
+        const tombolEditNilai = (s.idHasil && (s.status === 'Selesai' || s.status === 'Terkunci'))
+          ? `<button onclick="editNilaiAkhirUjian('${s.idHasil}', '${namaAman}', ${s.nilaiAkhir === '-' ? 0 : s.nilaiAkhir})" title="Ubah nilai manual (mis. pengurangan karena kecurangan)" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100"><i class="fa-solid fa-pen"></i> Edit</button>`
+          : '';
+        const tombolReset = s.idHasil
+          ? `<button onclick="resetUjianSiswa('${s.idHasil}', '${namaAman}')" title="Reset supaya siswa bisa mengerjakan ulang dari awal" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-rotate-left"></i> Reset</button>`
+          : '';
+        let kolPembandingHtml = '';
+        if (kolomPembanding) {
+          if (res.iniSesiRemedial) {
+            kolPembandingHtml = `<td class="p-2 text-center text-slate-500">${s.nilaiAsal === null ? '-' : s.nilaiAsal}</td>`;
+          } else {
+            kolPembandingHtml = `<td class="p-2 text-center text-slate-500">${s.nilaiRemedial === null ? '-' : s.nilaiRemedial}</td>`;
+          }
+        }
+        let kolRekapHtml = '';
+        if (res.adaSesiRemedial) {
+          const infoRekap = s.nilaiRekapFinal === null ? `<span class="text-slate-300">-</span>` : `<span class="font-black text-emerald-600">${s.nilaiRekapFinal}</span><br><span class="text-[9px] text-slate-400">${s.sumberNilaiRekap}</span>`;
+          const tombolAtur = s.idHasil ? `<br><button onclick="aturNilaiRekap('${s.idHasil}', '${namaAman}', ${s.nilaiAkhir === '-' ? 0 : s.nilaiAkhir}, ${s.nilaiRemedial === null ? 0 : s.nilaiRemedial})" class="text-[9px] font-bold px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 mt-1"><i class="fa-solid fa-sliders"></i> Atur</button>` : '';
+          kolRekapHtml = `<td class="p-2 text-center">${infoRekap}${tombolAtur}</td>`;
+        }
+        return `
           <tr class="border-b border-slate-100">
             <td class="p-2 text-left font-bold text-slate-700">${s.nama}<br><span class="text-[10px] text-slate-400 font-normal">${s.username} • ${s.kelas}</span></td>
             <td class="p-2 text-center">${_badgeStatusHasil(s.status)}${s.status === 'Terkunci' && s.jumlahPelanggaran ? `<br><span class="text-[9px] text-slate-400">${s.jumlahPelanggaran}x keluar layar</span>` : ''}${s.catatanWaktu ? `<br><span class="text-[9px] text-amber-600 font-bold" title="${s.catatanWaktu}"><i class="fa-solid fa-clock"></i> Terlambat</span>` : ''}</td>
-            <td class="p-2 text-center font-black ${s.nilaiAkhir === '-' ? 'text-slate-300' : 'text-indigo-600'}">${s.nilaiAkhir}</td>
-            <td class="p-2 text-center">
-              ${s.status === 'Terkunci' ? `<button onclick="bukaKuncPelanggaran('${s.idHasil}', '${s.nama.replace(/'/g, "")}', '${idSesi}')" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-50 text-red-600 hover:bg-red-100"><i class="fa-solid fa-unlock"></i> Buka Kembali</button>` :
-                s.idHasil ? `<button onclick="bukaKoreksiJawaban('${s.idHasil}', '${s.nama.replace(/'/g, "")}', ${res.adaSoalEssay})" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100">${res.adaSoalEssay ? 'Koreksi' : 'Lihat'}</button>` : '-'}
-            </td>
-          </tr>`).join('');
+            <td class="p-2 text-center font-black ${s.nilaiAkhir === '-' ? 'text-slate-300' : 'text-indigo-600'}">${s.nilaiAkhir}${s.nilaiAkhirSebelumEdit !== null ? `<br><span class="text-[9px] text-amber-500 font-normal line-through">${s.nilaiAkhirSebelumEdit}</span>` : ''}</td>
+            ${kolPembandingHtml}
+            ${kolRekapHtml}
+            <td class="p-2 text-center">${selEdit}${tombolEditNilai ? `<br>${tombolEditNilai}` : ''}${tombolReset ? `<br>${tombolReset}` : ''}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    function resetUjianSiswa(idHasil, nama) {
+      Swal.fire({
+        title: `Reset Ujian — ${nama}?`,
+        html: `<p class="text-xs text-slate-600 text-left">Nilai dan jawaban <b>${nama}</b> untuk sesi ini akan <b>dihapus permanen</b>. Siswa akan bisa membuka & mengerjakan ujian ini lagi dari awal seperti belum pernah mengerjakan. Tindakan ini tidak bisa dibatalkan.</p>`,
+        icon: 'warning', showCancelButton: true, confirmButtonText: 'Ya, Reset', cancelButtonText: 'Batal', confirmButtonColor: '#e11d48'
+      }).then(r => {
+        if (!r.isConfirmed) return;
+        Swal.fire({ title: 'Mereset...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
+        google.script.run.withSuccessHandler(res => {
+          if (res.status !== 'SUCCESS') { Swal.fire({ icon: 'error', title: 'Gagal', text: res.message }); return; }
+          Swal.fire({ icon: 'success', title: 'Berhasil', text: res.message, timer: 1800, showConfirmButton: false })
+            .then(() => lihatRekapHasilSesi(_idSesiRekapAktif));
+        }).withFailureHandler(err => {
+          Swal.fire({ icon: 'error', title: 'Gagal', text: err.message });
+        }).guruResetUjianSiswa(idHasil, userProfile.nama);
+      });
+    }
+
+    function editNilaiAkhirUjian(idHasil, nama, nilaiSaatIni) {
+      Swal.fire({
+        title: `Edit Nilai — ${nama}`,
+        html: `
+          <div class="text-left space-y-2">
+            <label class="text-xs font-bold text-slate-600">Nilai Akhir Baru (0-100)</label>
+            <input id="input-nilai-edit-baru" type="number" min="0" max="100" value="${nilaiSaatIni}" class="swal2-input" style="margin:0">
+            <label class="text-xs font-bold text-slate-600">Alasan Perubahan (wajib)</label>
+            <textarea id="input-alasan-edit-nilai" class="swal2-textarea" style="margin:0" placeholder="Contoh: Pengurangan nilai karena kedapatan mencontek saat ujian"></textarea>
+          </div>`,
+        showCancelButton: true, confirmButtonText: 'Simpan', cancelButtonText: 'Batal', confirmButtonColor: '#0E7C86',
+        preConfirm: () => {
+          const nilai = document.getElementById('input-nilai-edit-baru').value;
+          const alasan = document.getElementById('input-alasan-edit-nilai').value.trim();
+          if (nilai === '' || nilai < 0 || nilai > 100) { Swal.showValidationMessage('Nilai harus 0-100.'); return false; }
+          if (!alasan) { Swal.showValidationMessage('Alasan wajib diisi.'); return false; }
+          return { nilai: Number(nilai), alasan: alasan };
+        }
+      }).then(r => {
+        if (!r.isConfirmed) return;
+        Swal.fire({ title: 'Menyimpan...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
+        google.script.run.withSuccessHandler(res => {
+          if (res.status !== 'SUCCESS') { Swal.fire({ icon: 'error', title: 'Gagal', text: res.message }); return; }
+          lihatRekapHasilSesi(_idSesiRekapAktif);
+        }).withFailureHandler(err => {
+          Swal.fire({ icon: 'error', title: 'Gagal', text: err.message });
+        }).guruEditNilaiAkhirUjian(idHasil, r.value.nilai, r.value.alasan, userProfile.nama);
+      });
+    }
+
+    function aturNilaiRekap(idHasil, nama, nilaiUjian, nilaiRemedial) {
+      Swal.fire({
+        title: `Nilai Rekap — ${nama}`,
+        html: `
+          <div class="text-left space-y-2 text-xs text-slate-600">
+            <p>Nilai Ujian: <b>${nilaiUjian}</b> &nbsp;|&nbsp; Nilai Remedial: <b>${nilaiRemedial === 0 ? '-' : nilaiRemedial}</b></p>
+            <label class="flex items-center gap-2 mt-2"><input type="radio" name="mode-rekap" value="Otomatis" checked> Pakai nilai tertinggi otomatis</label>
+            <label class="flex items-center gap-2"><input type="radio" name="mode-rekap" value="Manual"> Input manual</label>
+            <input id="input-nilai-rekap-manual" type="number" min="0" max="100" class="swal2-input" style="margin:0" placeholder="Nilai manual (0-100)" disabled>
+          </div>`,
+        showCancelButton: true, confirmButtonText: 'Simpan', cancelButtonText: 'Batal', confirmButtonColor: '#0E7C86',
+        didOpen: () => {
+          document.querySelectorAll('input[name="mode-rekap"]').forEach(r => {
+            r.addEventListener('change', () => {
+              document.getElementById('input-nilai-rekap-manual').disabled = (r.value !== 'Manual' && document.querySelector('input[name="mode-rekap"]:checked').value !== 'Manual');
+            });
+          });
+        },
+        preConfirm: () => {
+          const mode = document.querySelector('input[name="mode-rekap"]:checked').value;
+          const nilaiManual = document.getElementById('input-nilai-rekap-manual').value;
+          if (mode === 'Manual' && (nilaiManual === '' || nilaiManual < 0 || nilaiManual > 100)) { Swal.showValidationMessage('Isi nilai manual 0-100.'); return false; }
+          return { mode: mode, nilaiManual: mode === 'Manual' ? Number(nilaiManual) : null };
+        }
+      }).then(r => {
+        if (!r.isConfirmed) return;
+        Swal.fire({ title: 'Menyimpan...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
+        google.script.run.withSuccessHandler(res => {
+          if (res.status !== 'SUCCESS') { Swal.fire({ icon: 'error', title: 'Gagal', text: res.message }); return; }
+          lihatRekapHasilSesi(_idSesiRekapAktif);
+        }).withFailureHandler(err => {
+          Swal.fire({ icon: 'error', title: 'Gagal', text: err.message });
+        }).guruSimpanNilaiRekapEfektif(idHasil, r.value.mode, r.value.nilaiManual, userProfile.nama);
+      });
     }
 
     function _filterRekapHasilSesiKelas(kelasFilter) {
@@ -6078,18 +6191,23 @@
         const daftarKelasUnik = res.sesi.kelas;
         const opsiKelas = `<option value="">Semua Kelas</option>` + daftarKelasUnik.map(k => `<option value="${k}">${k}</option>`).join('');
         const baris = _renderBarisRekapHasilSesi('');
+        const thPembanding = res.iniSesiRemedial ? `<th class="p-2">Nilai Awal</th>` : (res.adaSesiRemedial ? `<th class="p-2">Nilai Remedial</th>` : '');
+        const thRekap = res.adaSesiRemedial ? `<th class="p-2">Nilai Rekap</th>` : '';
+        const infoRemedial = res.iniSesiRemedial ? `<div class="text-[10px] text-amber-600 font-bold mt-1"><i class="fa-solid fa-circle-info"></i> Ini sesi Remedial — kolom "Nilai Awal" menampilkan nilai ujian sebelum remedial sebagai pembanding.</div>` :
+          (res.adaSesiRemedial ? `<div class="text-[10px] text-emerald-600 font-bold mt-1"><i class="fa-solid fa-circle-info"></i> Sesi ini punya Remedial. Nilai Rekap otomatis mengambil yang tertinggi antara nilai ujian & remedial. Pakai tombol "Atur" kalau ingin isi nilai manual.</div>` : '');
 
         Swal.fire({
-          title: res.sesi.judul, width: 650,
+          title: res.sesi.judul, width: 750,
           html: `
-            <div class="flex items-center justify-between gap-2 mb-3 text-left">
+            <div class="flex items-center justify-between gap-2 mb-1 text-left">
               <div class="text-xs text-slate-500">${res.sesi.jenis} • ${res.jumlahSoal} soal • Kelas: ${res.sesi.kelas.join(', ')}</div>
               <select id="filter-kelas-rekap-hasil" onchange="_filterRekapHasilSesiKelas(this.value)" class="p-1.5 border border-slate-200 rounded-lg text-xs bg-white font-semibold text-slate-700 shrink-0">${opsiKelas}</select>
             </div>
-            <div class="max-h-96 overflow-y-auto">
+            <div class="text-left">${infoRemedial}</div>
+            <div class="max-h-96 overflow-y-auto mt-2">
               <table class="w-full text-xs border-collapse">
                 <thead class="sticky top-0 bg-white"><tr class="bg-slate-100 text-slate-500 font-bold uppercase">
-                  <th class="p-2 text-left">Siswa</th><th class="p-2">Status</th><th class="p-2">Nilai</th><th class="p-2">Aksi</th>
+                  <th class="p-2 text-left">Siswa</th><th class="p-2">Status</th><th class="p-2">Nilai</th>${thPembanding}${thRekap}<th class="p-2">Aksi</th>
                 </tr></thead>
                 <tbody id="tbody-rekap-hasil-sesi">${baris}</tbody>
               </table>
@@ -6255,8 +6373,6 @@
     function _mulaiRunnerUjian(res, idSesi) {
       _sesiUjianAktif = res;
       _sesiUjianAktif.idSesi = idSesi;
-      const waktuWatermark = new Date().toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-      _pasangWatermarkAntiBocor(document.getElementById('watermark-runner-ujian'), (userProfile.nama || userProfile.username) + ' • ' + waktuWatermark);
       _soalUjianAktif = res.soal;
       _raguRaguUjianAktif = {};
       _nomorSoalAktif = 0;
