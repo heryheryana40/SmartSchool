@@ -8,29 +8,83 @@ function doGet(e) {
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
+/** Health-check ringan untuk badge "Sistem Online" di header. Sengaja TIDAK menyentuh Sheet
+ *  sama sekali supaya responsnya cepat & tidak membebani kuota baca/tulis Google Sheets —
+ *  tujuannya cuma membuktikan server Apps Script masih hidup dan bisa dihubungi. */
+function cekStatusServer() {
+  return { status: "OK", waktuServer: new Date().toISOString() };
+}
+
+// ==================== KEAMANAN PASSWORD (Hashing SHA-256 + Pepper) ====================
+// Password TIDAK PERNAH disimpan sebagai teks biasa lagi. Disimpan dengan format "sha256:<64 hex>".
+// Akun lama yang passwordnya masih teks biasa otomatis di-upgrade ke hash begitu berhasil login sekali.
+
+function _hashPassword(passwordPlain, username) {
+  var props = PropertiesService.getScriptProperties();
+  var pepper = props.getProperty('PASSWORD_PEPPER');
+  if (!pepper) {
+    // Kunci rahasia tambahan, dibuat otomatis sekali lalu disimpan permanen di Script Properties
+    // (TIDAK ada di Sheet sama sekali) — supaya hash tidak bisa ditebak ulang walau Sheet-nya bocor.
+    pepper = Utilities.getUuid();
+    props.setProperty('PASSWORD_PEPPER', pepper);
+  }
+  var raw = username.toString().trim().toLowerCase() + "|" + passwordPlain.toString().trim() + "|" + pepper;
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+  return bytes.map(function(b) {
+    var v = (b < 0) ? b + 256 : b;
+    var hex = v.toString(16);
+    return hex.length === 1 ? "0" + hex : hex;
+  }).join("");
+}
+
+function _buatHashTersimpan(passwordPlain, username) {
+  return "sha256:" + _hashPassword(passwordPlain, username);
+}
+
+/**
+ * Cocokkan password input dengan yang tersimpan (baik sudah hash "sha256:..." maupun masih teks biasa peninggalan lama).
+ * Kembalikan { cocok: boolean, perluUpgrade: boolean } — perluUpgrade true berarti baris di Sheet perlu ditimpa dengan hash baru.
+ */
+function _cocokkanDanCekUpgradePassword(passwordTersimpan, passwordInput, username) {
+  var bersih = passwordTersimpan.toString().trim().replace(/^'/, "");
+  if (bersih.indexOf("sha256:") === 0) {
+    var cocok = (bersih === _buatHashTersimpan(passwordInput, username));
+    return { cocok: cocok, perluUpgrade: false };
+  }
+  // Peninggalan lama, masih teks biasa
+  var cocokLama = (bersih === passwordInput.toString().trim());
+  return { cocok: cocokLama, perluUpgrade: cocokLama };
+}
+
 // FUNGSI LOGIN BARU: Berdasarkan Username & Password Manual
 function prosesLoginManual(usernameInput, passwordInput) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheetUser = ss.getSheetByName("Users");
   var dataUser = sheetUser.getDataRange().getValues();
-  
+
   for(var i = 1; i < dataUser.length; i++) {
     // Bersihkan sisa tanda kutip (') di depan data lama (jika ada, akibat bug import massal sebelumnya)
     var usernameSheet = dataUser[i][0].toString().trim().replace(/^'/, "");
-    var passwordSheet = dataUser[i][1].toString().trim().replace(/^'/, "");
-    // Mencocokkan username (kolom A) dan password (kolom B)
-    if(usernameSheet === usernameInput.trim() && passwordSheet === passwordInput.trim()) {
-      return { 
-        status: "SUCCESS", 
-        role: dataUser[i][3], // Kolom D (Role)
-        data: {
-          username: dataUser[i][0],
-          nama: dataUser[i][2], // Kolom C (Nama)
-          role: dataUser[i][3],
-          kelas: dataUser[i].length > 4 ? dataUser[i][4] : "" // Kolom E (Kelas) - dibutuhkan utk filter Materi & Tugas siswa
-        }
-      };
+    if (usernameSheet !== usernameInput.trim()) continue;
+
+    var cek = _cocokkanDanCekUpgradePassword(dataUser[i][1], passwordInput, usernameSheet);
+    if (!cek.cocok) break; // Username ketemu tapi password salah -> ke pesan error generik di bawah (tidak bocorkan info username valid)
+
+    if (cek.perluUpgrade) {
+      // Login pertama kali sejak update keamanan ini -> upgrade otomatis dari teks biasa ke hash
+      sheetUser.getRange(i + 1, 2).setNumberFormat("@").setValue(_buatHashTersimpan(passwordInput, usernameSheet));
     }
+
+    return { 
+      status: "SUCCESS", 
+      role: dataUser[i][3], // Kolom D (Role)
+      data: {
+        username: dataUser[i][0].toString(),
+        nama: dataUser[i][2], // Kolom C (Nama)
+        role: dataUser[i][3],
+        kelas: dataUser[i].length > 4 ? dataUser[i][4] : "" // Kolom E (Kelas) - dibutuhkan utk filter Materi & Tugas siswa
+      }
+    };
   }
   return { status: "ERROR", message: "Username atau Password salah!" };
 }
@@ -68,7 +122,7 @@ function adminAmbilSemuaUser() {
   
   for(var i = 1; i < data.length; i++) {
     listUser.push({
-      username: data[i][0],
+      username: data[i][0] !== null && typeof data[i][0] !== "undefined" ? data[i][0].toString() : "",
       nama: data[i][2],
       role: data[i][3],
       kelas: data[i].length > 4 ? data[i][4] : "" // Kolom E (Kelas) - sebelumnya tidak ikut terkirim
@@ -86,7 +140,7 @@ function adminTambahUserBaruDenganKelas(username, password, nama, role, kelas) {
   
   // Cek apakah username sudah terdaftar sebelumnya
   for(var i = 1; i < data.length; i++) {
-    if(data[i][0].toString().trim() === username.trim()) {
+    if(_samaUsername(data[i][0], username)) {
       return { status: "FAILED", message: "Username/NISN sudah terdaftar di sistem!" };
     }
   }
@@ -94,11 +148,16 @@ function adminTambahUserBaruDenganKelas(username, password, nama, role, kelas) {
   // Masukkan data ke baris baru: [Username, Password, Nama, Role, Kelas]
   sheet.appendRow([
     username.trim(),
-    password.trim(),
+    _buatHashTersimpan(password, username.trim()),
     nama.trim(),
     role,
     role === "Siswa" ? kelas.trim().toUpperCase() : "" // Hanya simpan kelas jika dia Siswa
   ]);
+  // PENTING: kunci kolom Username (A) sebagai TEKS setelah ditulis — kalau tidak, Google Sheets akan
+  // otomatis mengubah username/NISN yang berupa angka semua (mis. "0087703627") jadi tipe Number,
+  // sehingga angka 0 di depan hilang ("87703627") dan bikin akun tidak bisa login/data macet loading.
+  var barisBaru = sheet.getLastRow();
+  sheet.getRange(barisBaru, 1).setNumberFormat("@").setValue(username.trim());
   
   catatLogAktivitas("Admin", "Tambah Akun", "Membuat akun baru " + username + " (" + nama + ") sebagai " + role);
   
@@ -112,7 +171,7 @@ function adminHapusUser(username) {
   var data = sheet.getDataRange().getValues();
   
   for(var i = data.length - 1; i >= 1; i--) {
-    if(data[i][0].toString().trim() === username.trim()) {
+    if(_samaUsername(data[i][0], username)) {
       var namaUser = data[i][2];
       sheet.deleteRow(i + 1);
       catatLogAktivitas("Admin", "Hapus Akun", "Menghapus akun " + username + " (" + namaUser + ")");
@@ -157,6 +216,7 @@ function ambilDaftarSiswaBerdasarkanKelas(kelasDipilih) {
     }
   }
   
+  siswaList.sort(function(a, b) { return a.nama.localeCompare(b.nama); });
   return { siswa: siswaList, daftarKelas: semuaKelas };
 }
 
@@ -310,6 +370,13 @@ function adminImportUserMassal(dataArray) {
   var sheet = ss.getSheetByName("Users");
   var dataEksisting = sheet.getDataRange().getValues();
   var daftarKelasValid = ambilDaftarKelasMaster(); // Untuk validasi kelas dikenal/tidak
+
+  // Peta kunci ternormalisasi (huruf besar, tanpa spasi/tanda baca) -> ejaan resmi di master.
+  // Dipakai supaya "XII 3" / "xii-3" / "XII - 3" dari file Excel otomatis disamakan penulisannya
+  // dengan ejaan resmi di Daftar_Kelas, mencegah munculnya varian tulisan baru yang tercecer.
+  var _kunciKelasImport = function(s) { return s.toUpperCase().replace(/[^A-Z0-9]/g, ''); };
+  var petaKelasValidByKunci = {};
+  daftarKelasValid.forEach(function(k) { petaKelasValidByKunci[_kunciKelasImport(k)] = k; });
   
   // Ambil semua username eksisting untuk validasi duplikasi
   var setUsername = {};
@@ -320,7 +387,7 @@ function adminImportUserMassal(dataArray) {
   var barisBaru = [];
   var jumlahSukses = 0;
   var detailGagal = []; // {baris, username, nama, alasan}
-  var peringatanKelas = []; // Kelas yang belum terdaftar di master data (tidak menggagalkan import)
+  var peringatanKelas = []; // Kelas yang benar-benar tidak dikenal (tidak menggagalkan import)
   
   for (var j = 0; j < dataArray.length; j++) {
     var row = dataArray[j];
@@ -342,12 +409,21 @@ function adminImportUserMassal(dataArray) {
     }
     
     if (role === "Siswa" && kelas && daftarKelasValid.indexOf(kelas) === -1) {
-      peringatanKelas.push({ username: username, nama: nama, kelas: kelas });
+      var kelasCocokMaster = petaKelasValidByKunci[_kunciKelasImport(kelas)];
+      if (kelasCocokMaster) {
+        // Ejaan di Excel beda tipis (spasi/tanda hubung/huruf) dari master, tapi maksudnya kelas
+        // yang sama -> otomatis disamakan ke ejaan resmi supaya tidak jadi varian baru yang tercecer.
+        kelas = kelasCocokMaster;
+      } else {
+        // Benar-benar tidak dikenal di master sama sekali -> tetap diimpor apa adanya, tapi diberi
+        // peringatan supaya admin bisa cek/tambahkan ke Daftar_Kelas kalau memang kelas baru.
+        peringatanKelas.push({ username: username, nama: nama, kelas: kelas });
+      }
     }
     
     barisBaru.push([
       username, 
-      password, 
+      _buatHashTersimpan(password, username), 
       nama, 
       role, 
       role === "Siswa" ? kelas : ""
@@ -384,9 +460,10 @@ function adminResetPasswordUser(username, passwordBaru) {
   var data = sheet.getDataRange().getValues();
   
   for(var i = 1; i < data.length; i++) {
-    if(data[i][0].toString().trim() === username.trim()) {
-      // Kolom B adalah Password (indeks ke-1)
-      sheet.getRange(i + 1, 2).setValue(passwordBaru.trim());
+    if(_samaUsername(data[i][0], username)) {
+      // Kolom B adalah Password (indeks ke-1) — dikunci sebagai teks jaga-jaga kalau password berupa angka (mis. PIN berawalan 0)
+      var usernameAsli = data[i][0].toString().trim().replace(/^'/, "");
+      sheet.getRange(i + 1, 2).setNumberFormat("@").setValue(_buatHashTersimpan(passwordBaru.trim(), usernameAsli));
       catatLogAktivitas("Admin", "Reset Password", "Mereset password akun " + username);
       return { status: "SUCCESS", message: "Password untuk " + username + " berhasil direset menjadi: " + passwordBaru };
     }
@@ -682,6 +759,87 @@ function adminAmbilStatistikDashboard() {
 
 // ==================== MODUL MASTER DATA KELAS ====================
 
+/**
+ * Diagnostik (read-only): memindai seluruh data siswa di sheet "Users" dan mengelompokkan
+ * berdasarkan teks kelas PERSIS seperti tersimpan, lalu menandai kelompok yang kemungkinan
+ * besar sebenarnya kelas YANG SAMA tapi tertulis beda (mis. "XII 3" vs "XII-3") — biasanya
+ * akibat ketidakkonsistenan saat import Excel massal. Tidak mengubah data apa pun.
+ */
+function adminCekKonsistensiKelasSiswa() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Users");
+  if (!sheet) return { status: "ERROR", message: "Sheet Users tidak ditemukan.", daftar: [], kemungkinanDuplikat: [] };
+
+  var data = sheet.getDataRange().getValues();
+  var tally = {}; // teks kelas persis -> jumlah siswa
+
+  for (var i = 1; i < data.length; i++) {
+    var role = data[i][3] ? data[i][3].toString().trim() : "";
+    if (role !== "Siswa") continue;
+    var kelasPersis = (data[i].length > 4 && data[i][4]) ? data[i][4].toString().trim() : "(kosong)";
+    tally[kelasPersis] = (tally[kelasPersis] || 0) + 1;
+  }
+
+  var daftar = Object.keys(tally).map(function(k) {
+    return { kelas: k, jumlah: tally[k] };
+  }).sort(function(a, b) { return a.kelas.localeCompare(b.kelas); });
+
+  // Kelompokkan berdasarkan kunci ternormalisasi (huruf besar semua, tanpa spasi/tanda baca)
+  // untuk menemukan kelompok yang berisi LEBIH dari satu variasi tulisan berbeda.
+  var kunci = function(s) { return s.toUpperCase().replace(/[^A-Z0-9]/g, ''); };
+  var kelompok = {};
+  daftar.forEach(function(item) {
+    var kk = kunci(item.kelas);
+    if (!kelompok[kk]) kelompok[kk] = [];
+    kelompok[kk].push(item);
+  });
+
+  var kemungkinanDuplikat = Object.keys(kelompok)
+    .map(function(kk) { return kelompok[kk]; })
+    .filter(function(grup) { return grup.length > 1; });
+
+  return { status: "SUCCESS", daftar: daftar, kemungkinanDuplikat: kemungkinanDuplikat };
+}
+
+/**
+ * Perbaikan massal (menulis data): mengganti SEMUA siswa yang kelasnya tertulis "kelasLama"
+ * (persis) menjadi "kelasBaru" yang sudah dipilih admin sebagai penulisan resmi/standar.
+ * Dipakai setelah adminCekKonsistensiKelasSiswa menemukan variasi tulisan untuk kelas yang sama.
+ */
+function adminSamakanPenulisanKelasSiswa(kelasLama, kelasBaru) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Users");
+  if (!sheet) return { status: "ERROR", message: "Sheet Users tidak ditemukan." };
+
+  var lamaBersih = kelasLama.toString().trim();
+  var baruBersih = kelasBaru.toString().trim();
+  if (!lamaBersih || !baruBersih) return { status: "ERROR", message: "Nama kelas lama & baru wajib diisi." };
+  if (lamaBersih === baruBersih) return { status: "ERROR", message: "Kelas lama dan baru sama, tidak ada yang perlu diubah." };
+
+  var data = sheet.getDataRange().getValues();
+  var jumlahDiubah = 0;
+
+  for (var i = 1; i < data.length; i++) {
+    var role = data[i][3] ? data[i][3].toString().trim() : "";
+    var kelasBaris = (data[i].length > 4 && data[i][4]) ? data[i][4].toString().trim() : "";
+    if (role === "Siswa" && kelasBaris === lamaBersih) {
+      sheet.getRange(i + 1, 5).setValue(baruBersih);
+      jumlahDiubah++;
+    }
+  }
+
+  if (jumlahDiubah > 0) {
+    catatLogAktivitas("Admin", "Samakan Penulisan Kelas", "Mengubah " + jumlahDiubah + " siswa dari kelas \"" + lamaBersih + "\" menjadi \"" + baruBersih + "\"");
+  }
+
+  return {
+    status: jumlahDiubah > 0 ? "SUCCESS" : "ERROR",
+    message: jumlahDiubah > 0
+      ? jumlahDiubah + " siswa berhasil diubah dari \"" + lamaBersih + "\" menjadi \"" + baruBersih + "\"."
+      : "Tidak ada siswa yang cocok dengan kelas \"" + lamaBersih + "\"."
+  };
+}
+
 function ambilDaftarKelasMaster() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("Daftar_Kelas");
@@ -743,11 +901,12 @@ function gantiPasswordSendiri(username, passwordLama, passwordBaru) {
   
   for (var i = 1; i < data.length; i++) {
     if (data[i][0].toString().trim() === username.trim()) {
-      var passwordTersimpan = data[i][1].toString().trim().replace(/^'/, "");
-      if (passwordTersimpan !== passwordLama.trim()) {
+      var usernameAsli = data[i][0].toString().trim().replace(/^'/, "");
+      var cek = _cocokkanDanCekUpgradePassword(data[i][1], passwordLama, usernameAsli);
+      if (!cek.cocok) {
         return { status: "ERROR", message: "Password lama yang Anda masukkan salah." };
       }
-      sheet.getRange(i + 1, 2).setNumberFormat("@").setValue(passwordBaru.trim());
+      sheet.getRange(i + 1, 2).setNumberFormat("@").setValue(_buatHashTersimpan(passwordBaru.trim(), usernameAsli));
       catatLogAktivitas(username, "Ganti Password Sendiri", "Pengguna mengganti password akunnya sendiri");
       return { status: "SUCCESS", message: "Password berhasil diperbarui. Gunakan password baru saat login berikutnya." };
     }
@@ -800,9 +959,30 @@ function ambilRekapPresensiUntukExport(bulanFilter, kelasFilter) {
 var FOLDER_ID_MATERI = "1UMYqd45VZ9mxjXZ3IvM2IivBrKpSBc-f";
 var FOLDER_ID_TUGAS = "1Otf_a2gBs6u3UdNjHCTyQFWTtnhn8S44";
 
+/**
+ * Folder khusus gambar Bank Soal dibuat otomatis sekali saja (di root Drive akun pemilik script),
+ * lalu ID-nya disimpan permanen di Script Properties supaya panggilan berikutnya memakai folder yang sama
+ * (tidak membuat folder baru berulang-ulang).
+ */
+function _pastikanFolderGambarSoal() {
+  var props = PropertiesService.getScriptProperties();
+  var idTersimpan = props.getProperty("FOLDER_ID_GAMBAR_SOAL");
+  if (idTersimpan) {
+    try {
+      var folderCek = DriveApp.getFolderById(idTersimpan); // pastikan folder masih ada & belum dihapus manual
+      return folderCek.getId();
+    } catch (errCek) {
+      // Folder tersimpan sudah tidak valid (mis. dihapus manual) — buat ulang di bawah ini
+    }
+  }
+  var folderBaru = DriveApp.createFolder("SmartSchool - Gambar Bank Soal");
+  props.setProperty("FOLDER_ID_GAMBAR_SOAL", folderBaru.getId());
+  return folderBaru.getId();
+}
+
 function uploadFileKeDrive(base64Data, namaFile, mimeType, jenisUpload) {
   try {
-    var idFolder = (jenisUpload === "Tugas") ? FOLDER_ID_TUGAS : FOLDER_ID_MATERI;
+    var idFolder = (jenisUpload === "Tugas") ? FOLDER_ID_TUGAS : (jenisUpload === "Soal") ? _pastikanFolderGambarSoal() : FOLDER_ID_MATERI;
     var folder = DriveApp.getFolderById(idFolder);
 
     var decoded = Utilities.base64Decode(base64Data);
@@ -822,14 +1002,16 @@ function uploadFileKeDrive(base64Data, namaFile, mimeType, jenisUpload) {
       }
     }
     
-    return { status: "SUCCESS", url: file.getUrl(), namaFile: namaFile };
+    return { status: "SUCCESS", url: file.getUrl(), urlGambar: "https://drive.google.com/thumbnail?id=" + file.getId() + "&sz=w2000", namaFile: namaFile };
   } catch (err) {
     return { status: "ERROR", message: "Gagal mengunggah file: " + err.message };
   }
 }
 
+var _idUnikCounter = 0;
 function _buatIdUnik(prefix) {
-  return prefix + "-" + new Date().getTime() + "-" + Math.floor(Math.random() * 1000);
+  _idUnikCounter = (_idUnikCounter + 1) % 1000000;
+  return prefix + "-" + new Date().getTime() + "-" + Math.floor(Math.random() * 1000) + "-" + _idUnikCounter;
 }
 
 // ---------- MATERI ----------
@@ -1403,14 +1585,33 @@ function guruAmbilPengumpulanTugas(idTugas) {
       }
     }
   }
+  semuaSiswaTarget.sort(function(a, b) { return a.nama.localeCompare(b.nama); });
 
   var sheetKumpul = _pastikanSheetPengumpulanTugasBenar();
   var dataKumpul = sheetKumpul.getDataRange().getValues();
 
+  // Ambil daftar kelompok tugas ini & buat peta siswa->kelompok LEBIH DULU (dari data master Kelompok),
+  // supaya siswa yang BELUM mengumpulkan tugas tetap muncul di bawah kelompoknya masing-masing,
+  // bukan tercampur ke "Belum masuk kelompok" hanya karena belum ada baris submission.
+  var kelompokList = [];
+  var petaSiswaKelompok = {}; // username -> { idKelompok, namaKelompok }
+  if (jenisTugas === "Kelompok") {
+    kelompokList = guruAmbilKelompokTugas(idTugas);
+    kelompokList.forEach(function(klp) {
+      (klp.anggota || []).forEach(function(a) {
+        petaSiswaKelompok[a.username.toString().trim()] = { idKelompok: klp.idKelompok, namaKelompok: klp.namaKelompok };
+      });
+    });
+  }
+
   var hasil = semuaSiswaTarget.map(function(s) {
+    var infoKelompok = petaSiswaKelompok[s.username.toString().trim()] || null;
     var record = {
       username: s.username, nama: s.nama, kelas: s.kelas, statusKumpul: "Belum Kumpul", waktuKumpul: "", jenisJawaban: "", isiJawaban: "",
-      nilai: "", catatanGuru: "", idKelompok: "", namaKelompok: "", usernamePengirim: "", laporanKontribusi: null, riwayatSubmission: []
+      nilai: "", catatanGuru: "",
+      idKelompok: infoKelompok ? infoKelompok.idKelompok : "",
+      namaKelompok: infoKelompok ? infoKelompok.namaKelompok : "",
+      usernamePengirim: "", laporanKontribusi: null, riwayatSubmission: []
     };
     for (var j = 1; j < dataKumpul.length; j++) {
       if (dataKumpul[j][0].toString().trim() === idTugas.toString().trim() && dataKumpul[j][1].toString().trim() === s.username.toString().trim()) {
@@ -1420,7 +1621,10 @@ function guruAmbilPengumpulanTugas(idTugas) {
         record.isiJawaban = dataKumpul[j][6];
         record.nilai = dataKumpul[j][8];
         record.catatanGuru = dataKumpul[j][9];
-        record.idKelompok = dataKumpul[j][10] || "";
+        // Utamakan idKelompok dari data kelompok master (peta) di atas. Jika siswa ini tidak
+        // ditemukan di peta (mis. kelompok sudah dihapus/diubah setelah dia submit), pakai
+        // idKelompok yang sempat tercatat saat submit sebagai fallback agar histori tidak hilang.
+        if (!record.idKelompok) record.idKelompok = dataKumpul[j][10] || "";
         record.usernamePengirim = dataKumpul[j][11] || "";
         try { record.laporanKontribusi = dataKumpul[j][12] ? JSON.parse(dataKumpul[j][12]) : null; } catch (e) { record.laporanKontribusi = null; }
         try { record.riwayatSubmission = dataKumpul[j][13] ? JSON.parse(dataKumpul[j][13]) : []; } catch (e) { record.riwayatSubmission = []; }
@@ -1429,15 +1633,6 @@ function guruAmbilPengumpulanTugas(idTugas) {
     }
     return record;
   });
-
-  // Jika tugas kelompok, sertakan nama kelompok masing-masing siswa & susun juga versi terkelompok untuk tampilan guru
-  var kelompokList = [];
-  if (jenisTugas === "Kelompok") {
-    kelompokList = guruAmbilKelompokTugas(idTugas);
-    var petaNamaKelompok = {};
-    kelompokList.forEach(function(klp) { petaNamaKelompok[klp.idKelompok] = klp.namaKelompok; });
-    hasil.forEach(function(r) { if (r.idKelompok) r.namaKelompok = petaNamaKelompok[r.idKelompok] || ""; });
-  }
 
   return { jenisTugas: jenisTugas, daftarSiswa: hasil, daftarKelompok: kelompokList };
 }
@@ -2500,7 +2695,7 @@ function guruAmbilDaftarSiswaKelas(kelas) {
 
 // ==================== MODUL BOBOT NILAI & NILAI UJIAN SEMESTER (RAPOR) ====================
 
-var HEADER_BOBOT_NILAI = ["Guru Username", "Mapel", "Bobot Tugas", "Bobot UTS", "Bobot UAS"];
+var HEADER_BOBOT_NILAI = ["Guru Username", "Mapel", "Bobot Tugas", "Bobot UTS", "Bobot UAS", "Bobot CBT"];
 
 function _pastikanSheetBobotNilaiBenar() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -2508,13 +2703,16 @@ function _pastikanSheetBobotNilaiBenar() {
   if (!sheet) {
     sheet = ss.insertSheet("Bobot_Nilai_Guru");
     sheet.appendRow(HEADER_BOBOT_NILAI);
+    return sheet;
   }
+  var headerSaatIni = sheet.getRange(1, 1, 1, HEADER_BOBOT_NILAI.length).getValues()[0];
+  if (!headerSaatIni[5]) sheet.getRange(1, 6).setValue("Bobot CBT");
   return sheet;
 }
 
 /** Simpan pengaturan bobot (harus total 100). Satu baris per guru+mapel (upsert). */
-function guruSimpanBobotNilai(guruUsername, mapel, bobotTugas, bobotUTS, bobotUAS) {
-  var total = Number(bobotTugas) + Number(bobotUTS) + Number(bobotUAS);
+function guruSimpanBobotNilai(guruUsername, mapel, bobotTugas, bobotUTS, bobotUAS, bobotCBT) {
+  var total = Number(bobotTugas) + Number(bobotUTS) + Number(bobotUAS) + Number(bobotCBT || 0);
   if (total !== 100) {
     return { status: "ERROR", message: "Total bobot harus 100% (saat ini " + total + "%)." };
   }
@@ -2522,24 +2720,24 @@ function guruSimpanBobotNilai(guruUsername, mapel, bobotTugas, bobotUTS, bobotUA
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     if (data[i][0].toString().trim() === guruUsername.toString().trim() && data[i][1].toString().trim() === (mapel || "").toString().trim()) {
-      sheet.getRange(i + 1, 3, 1, 3).setValues([[bobotTugas, bobotUTS, bobotUAS]]);
+      sheet.getRange(i + 1, 3, 1, 4).setValues([[bobotTugas, bobotUTS, bobotUAS, bobotCBT || 0]]);
       return { status: "SUCCESS", message: "Bobot nilai berhasil disimpan." };
     }
   }
-  sheet.appendRow([guruUsername, mapel || "", bobotTugas, bobotUTS, bobotUAS]);
+  sheet.appendRow([guruUsername, mapel || "", bobotTugas, bobotUTS, bobotUAS, bobotCBT || 0]);
   return { status: "SUCCESS", message: "Bobot nilai berhasil disimpan." };
 }
 
-/** Ambil bobot nilai guru untuk 1 mapel. Default: 100% Tugas, 0% UTS, 0% UAS (kalau belum pernah diatur). */
+/** Ambil bobot nilai guru untuk 1 mapel. Default: 100% Tugas, sisanya 0% (kalau belum pernah diatur). */
 function guruAmbilBobotNilai(guruUsername, mapel) {
   var sheet = _pastikanSheetBobotNilaiBenar();
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     if (data[i][0].toString().trim() === guruUsername.toString().trim() && data[i][1].toString().trim() === (mapel || "").toString().trim()) {
-      return { bobotTugas: Number(data[i][2]), bobotUTS: Number(data[i][3]), bobotUAS: Number(data[i][4]) };
+      return { bobotTugas: Number(data[i][2]), bobotUTS: Number(data[i][3]), bobotUAS: Number(data[i][4]), bobotCBT: Number(data[i][5]) || 0 };
     }
   }
-  return { bobotTugas: 100, bobotUTS: 0, bobotUAS: 0 };
+  return { bobotTugas: 100, bobotUTS: 0, bobotUAS: 0, bobotCBT: 0 };
 }
 
 var HEADER_NILAI_UJIAN_SEMESTER = ["ID", "Guru Username", "Kelas", "Mapel", "Semester", "Jenis Ujian", "Username Siswa", "Nama Siswa", "Nilai", "Waktu Impor"];
@@ -2606,6 +2804,144 @@ function guruAmbilNilaiUjianSemester(guruUsername, kelas, mapel, semester, jenis
   return peta;
 }
 
+/**
+ * Rata-rata Nilai Akhir CBT per siswa, HANYA dari sesi ujian milik guru ini di kelas+mapel terkait
+ * yang ditandai "Sertakan Rekap" = TRUE, dan HANYA hitungan siswa yang statusnya "Selesai"
+ * (Sedang Mengerjakan/Terkunci belum final, tidak ikut dihitung dulu).
+ *
+ * Sesi Remedial TIDAK muncul sebagai kolom terpisah di rekap. Untuk siswa yang mengikuti remedial,
+ * nilai yang dipakai di rekap otomatis adalah nilai TERTINGGI antara nilai ujian asli vs nilai remedial
+ * terbaiknya — KECUALI guru sudah menetapkan nilai manual lewat guruSimpanNilaiRekapEfektif
+ * (kolom "Sumber Nilai Rekap" = "Manual"), maka nilai manual itu yang dipakai.
+ */
+/**
+ * Perbaikan otomatis untuk sesi Remedial yang dibuat SEBELUM fitur "ID Sesi Asal" ada.
+ * Menautkan sesi berjenis "Remedial" yang belum tertaut, dengan mencocokkan judul
+ * (judul remedial = "<judul asal> (Remedial)"), guru, dan mapel yang sama.
+ * Aman dipanggil berkali-kali — sesi yang sudah tertaut dilewati.
+ */
+function _pastikanSemuaRemedialTertaut() {
+  var sheet = _pastikanSheetCbtSesiBenar();
+  var data = sheet.getDataRange().getValues();
+  var adaPerubahan = false;
+  for (var i = 1; i < data.length; i++) {
+    var jenis = data[i][4] ? data[i][4].toString().trim() : "";
+    if (jenis !== "Remedial") continue;
+    var idSesiAsalAda = data[i].length > 22 && data[i][22] ? data[i][22].toString().trim() : "";
+    if (idSesiAsalAda) continue; // sudah tertaut, lewati
+    var judul = data[i][3].toString();
+    var penanda = " (Remedial)";
+    if (judul.lastIndexOf(penanda) !== judul.length - penanda.length) continue; // bukan pola remedial standar, jangan menebak-nebak
+    var judulAsal = judul.substring(0, judul.length - penanda.length).trim();
+    var guru = data[i][1].toString().trim();
+    var mapel = data[i][5].toString().trim();
+    for (var j = 1; j < data.length; j++) {
+      if (j === i) continue;
+      var jenisJ = data[j][4] ? data[j][4].toString().trim() : "";
+      if (jenisJ === "Remedial") continue;
+      if (data[j][3].toString().trim() !== judulAsal) continue;
+      if (data[j][1].toString().trim() !== guru) continue;
+      if (data[j][5].toString().trim() !== mapel) continue;
+      sheet.getRange(i + 1, 23).setNumberFormat("@").setValue(data[j][0].toString());
+      data[i][22] = data[j][0].toString();
+      adaPerubahan = true;
+      break;
+    }
+  }
+  return adaPerubahan;
+}
+
+function _dataCBTUntukRekap(guruUsername, kelas, mapel) {
+  _pastikanSemuaRemedialTertaut();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetSesi = _pastikanSheetCbtSesiBenar();
+  var dataSesi = sheetSesi.getDataRange().getValues();
+  var daftarSesi = []; // [{idSesi, judul}] terurut sesuai tanggal dibuat
+  var remedialDariAsal = {}; // { idSesiAsal: [idSesiRemedial, ...] } — dikumpulkan dari SEMUA sesi (bukan cuma milik guru+kelas+mapel ini), untuk jaga-jaga
+
+  for (var i = 1; i < dataSesi.length; i++) {
+    var idSesiAsalBarisSemua = dataSesi[i].length > 22 && dataSesi[i][22] ? dataSesi[i][22].toString().trim() : "";
+    if (idSesiAsalBarisSemua) {
+      if (!remedialDariAsal[idSesiAsalBarisSemua]) remedialDariAsal[idSesiAsalBarisSemua] = [];
+      remedialDariAsal[idSesiAsalBarisSemua].push(dataSesi[i][0].toString().trim());
+    }
+  }
+
+  for (var i2 = 1; i2 < dataSesi.length; i2++) {
+    if (dataSesi[i2][1].toString().trim() !== guruUsername.toString().trim()) continue;
+    if (dataSesi[i2][5].toString().trim() !== (mapel || "").toString().trim()) continue;
+    var daftarKelasSesi = dataSesi[i2][6].toString().split(",").map(function(k) { return k.trim().toUpperCase(); });
+    if (daftarKelasSesi.indexOf(kelas.toString().trim().toUpperCase()) === -1) continue;
+    var sertakan = dataSesi[i2][20] === true || dataSesi[i2][20] === undefined || dataSesi[i2][20].toString().toUpperCase() !== "FALSE";
+    if (!sertakan) continue;
+    var jenisBaris = dataSesi[i2][4] ? dataSesi[i2][4].toString().trim() : "";
+    if (jenisBaris === "Remedial") continue; // Sesi Remedial tidak pernah jadi slot rekap terpisah, apa pun status tautannya
+    var idSesiAsalBaris = dataSesi[i2].length > 22 && dataSesi[i2][22] ? dataSesi[i2][22].toString().trim() : "";
+    if (idSesiAsalBaris) continue; // Jaga-jaga: kalau suatu saat ada sesi bertaut tapi jenisnya bukan "Remedial"
+    daftarSesi.push({ idSesi: dataSesi[i2][0].toString().trim(), judul: dataSesi[i2][3].toString() });
+  }
+
+  if (daftarSesi.length === 0) return { daftarSesi: [], nilaiPerSesi: {}, rataRata: {} };
+
+  var idSesiValid = {};
+  daftarSesi.forEach(function(s) { idSesiValid[s.idSesi] = true; });
+
+  var sheetHasil = _pastikanSheetHasilUjianBenar();
+  var dataHasil = sheetHasil.getDataRange().getValues();
+
+  // Peta nilai terbaik per (idSesiRemedial, username) — dipakai untuk cari nilai remedial terbaik seorang siswa
+  var nilaiHasilPerSesiUser = {}; // { idSesi: { usernameKey: nilai } }
+  for (var hh = 1; hh < dataHasil.length; hh++) {
+    var statusHH = dataHasil[hh][10].toString();
+    if (statusHH !== "Selesai" && statusHH !== "Terkunci") continue;
+    if (dataHasil[hh][8].toString() === "Menunggu") continue; // Essay belum dikoreksi, belum final
+    var idSesiHH = dataHasil[hh][1].toString().trim();
+    var keyHH = _normalisasiUsername(dataHasil[hh][2]);
+    if (!nilaiHasilPerSesiUser[idSesiHH]) nilaiHasilPerSesiUser[idSesiHH] = {};
+    nilaiHasilPerSesiUser[idSesiHH][keyHH] = Number(dataHasil[hh][9]) || 0;
+  }
+
+  var nilaiPerSesi = {}; // { usernameKey: { idSesi: nilai } }
+  var totalPerSiswa = {}, jumlahPerSiswa = {};
+
+  for (var h = 1; h < dataHasil.length; h++) {
+    var idSesiBaris = dataHasil[h][1].toString().trim();
+    if (!idSesiValid[idSesiBaris]) continue;
+    if (dataHasil[h][10].toString() !== "Selesai") continue;
+    if (dataHasil[h][8].toString() === "Menunggu") continue; // Soal Essay belum dikoreksi guru — jangan masuk rekap dulu, nilainya belum final
+    var key = _normalisasiUsername(dataHasil[h][2]);
+    var sumberRekap = dataHasil[h].length > 18 && dataHasil[h][18] ? dataHasil[h][18].toString() : "";
+    var nilai;
+    if (sumberRekap === "Manual") {
+      // Guru sudah menetapkan nilai manual untuk siswa ini -> pakai itu, jangan dihitung ulang otomatis
+      var nilaiManualTersimpan = dataHasil[h].length > 17 ? dataHasil[h][17] : "";
+      nilai = (nilaiManualTersimpan !== "" && nilaiManualTersimpan !== null) ? Number(nilaiManualTersimpan) : (Number(dataHasil[h][9]) || 0);
+    } else {
+      // Default OTOMATIS: bandingkan nilai ujian asli vs nilai remedial terbaik (kalau sesi ini punya remedial), ambil yang tertinggi
+      var nilaiAsli = Number(dataHasil[h][9]) || 0;
+      var nilaiTertinggi = nilaiAsli;
+      var daftarIdRemedial = remedialDariAsal[idSesiBaris] || [];
+      daftarIdRemedial.forEach(function(idRem) {
+        if (nilaiHasilPerSesiUser[idRem] && typeof nilaiHasilPerSesiUser[idRem][key] !== "undefined") {
+          if (nilaiHasilPerSesiUser[idRem][key] > nilaiTertinggi) nilaiTertinggi = nilaiHasilPerSesiUser[idRem][key];
+        }
+      });
+      nilai = nilaiTertinggi;
+    }
+    if (!nilaiPerSesi[key]) nilaiPerSesi[key] = {};
+    nilaiPerSesi[key][idSesiBaris] = nilai;
+    totalPerSiswa[key] = (totalPerSiswa[key] || 0) + nilai;
+    jumlahPerSiswa[key] = (jumlahPerSiswa[key] || 0) + 1;
+  }
+
+  var rataRata = {};
+  Object.keys(totalPerSiswa).forEach(function(key) {
+    rataRata[key] = Math.round(totalPerSiswa[key] / jumlahPerSiswa[key]);
+  });
+
+  return { daftarSesi: daftarSesi, nilaiPerSesi: nilaiPerSesi, rataRata: rataRata };
+}
+
 function guruAmbilRekapNilaiKelas(guruUsername, kelas, semester) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var semesterAktif = semester || "Ganjil";
@@ -2647,6 +2983,7 @@ function guruAmbilRekapNilaiKelas(guruUsername, kelas, semester) {
   var bobot = guruAmbilBobotNilai(guruUsername, mapel);
   var petaUTS = guruAmbilNilaiUjianSemester(guruUsername, kelas, mapel, semesterAktif, "UTS");
   var petaUAS = guruAmbilNilaiUjianSemester(guruUsername, kelas, mapel, semesterAktif, "UAS");
+  var dataCBT = _dataCBTUntukRekap(guruUsername, kelas, mapel);
 
   // 5. Susun tabel: per siswa, per tugas -> nilai, lalu hitung Nilai Akhir/Rapor berbobot
   var hasil = daftarSiswa.map(function(s) {
@@ -2673,9 +3010,17 @@ function guruAmbilRekapNilaiKelas(guruUsername, kelas, semester) {
       return { judul: tg.judul, nilai: nilai };
     });
 
+    var keyCBT = _normalisasiUsername(s.username);
+    var daftarNilaiCBT = dataCBT.daftarSesi.map(function(sesi) {
+      var nilaiSesiIni = (dataCBT.nilaiPerSesi[keyCBT] && typeof dataCBT.nilaiPerSesi[keyCBT][sesi.idSesi] !== "undefined")
+        ? dataCBT.nilaiPerSesi[keyCBT][sesi.idSesi] : "-"; // "-" = belum mengerjakan/belum selesai
+      return { judul: sesi.judul, nilai: nilaiSesiIni };
+    });
+
     var rataRataTugas = jumlahDinilai > 0 ? Math.round(totalNilai / jumlahDinilai) : "-";
     var nilaiUTS = (typeof petaUTS[s.username] !== "undefined") ? Number(petaUTS[s.username]) : "-";
     var nilaiUAS = (typeof petaUAS[s.username] !== "undefined") ? Number(petaUAS[s.username]) : "-";
+    var nilaiCBT = (typeof dataCBT.rataRata[keyCBT] !== "undefined") ? dataCBT.rataRata[keyCBT] : "-";
 
     // Nilai Akhir/Rapor: hanya dihitung kalau semua komponen yang bobotnya > 0 sudah lengkap datanya
     var nilaiAkhir = "-";
@@ -2683,11 +3028,13 @@ function guruAmbilRekapNilaiKelas(guruUsername, kelas, semester) {
     if (bobot.bobotTugas > 0 && rataRataTugas === "-") lengkap = false;
     if (bobot.bobotUTS > 0 && nilaiUTS === "-") lengkap = false;
     if (bobot.bobotUAS > 0 && nilaiUAS === "-") lengkap = false;
+    if (bobot.bobotCBT > 0 && nilaiCBT === "-") lengkap = false;
     if (lengkap) {
       var totalBerbobot =
         (bobot.bobotTugas > 0 ? (rataRataTugas * bobot.bobotTugas / 100) : 0) +
         (bobot.bobotUTS > 0 ? (nilaiUTS * bobot.bobotUTS / 100) : 0) +
-        (bobot.bobotUAS > 0 ? (nilaiUAS * bobot.bobotUAS / 100) : 0);
+        (bobot.bobotUAS > 0 ? (nilaiUAS * bobot.bobotUAS / 100) : 0) +
+        (bobot.bobotCBT > 0 ? (nilaiCBT * bobot.bobotCBT / 100) : 0);
       nilaiAkhir = Math.round(totalBerbobot);
     }
 
@@ -2696,13 +3043,14 @@ function guruAmbilRekapNilaiKelas(guruUsername, kelas, semester) {
       persentaseKehadiran: kehadiran.persentase,
       daftarNilaiTugas: daftarNilaiTugas,
       rataRataTugas: rataRataTugas,
-      nilaiUTS: nilaiUTS, nilaiUAS: nilaiUAS,
+      daftarNilaiCBT: daftarNilaiCBT,
+      nilaiUTS: nilaiUTS, nilaiUAS: nilaiUAS, nilaiCBT: nilaiCBT,
       nilaiAkhir: nilaiAkhir
     };
   });
 
   hasil.sort(function(a, b) { return a.nama.localeCompare(b.nama); });
-  return { daftarTugas: daftarTugas, daftarSiswa: hasil, bobot: bobot, mapel: mapel, semester: semesterAktif };
+  return { daftarTugas: daftarTugas, daftarSesiCBT: dataCBT.daftarSesi, daftarSiswa: hasil, bobot: bobot, mapel: mapel, semester: semesterAktif };
 }
 
 /**
@@ -2823,7 +3171,7 @@ function aiAnalisisRekapKelas(guruUsername, kelas) {
 // ==================== MODUL BANK SOAL (GURU) ====================
 // Gudang soal milik guru: tidak terikat waktu ujian, bisa dipakai ulang di banyak sesi CBT berbeda.
 
-var HEADER_BANK_SOAL = ["ID Soal", "Guru Username", "Guru Nama", "Mapel", "Kelas", "Topik/Bab", "Tipe Soal", "Pertanyaan", "Opsi A", "Opsi B", "Opsi C", "Opsi D", "Opsi E", "Kunci Jawaban", "Poin", "Level Kognitif", "Timestamp"];
+var HEADER_BANK_SOAL = ["ID Soal", "Guru Username", "Guru Nama", "Mapel", "Kelas", "Topik/Bab", "Tipe Soal", "Pertanyaan", "Opsi A", "Opsi B", "Opsi C", "Opsi D", "Opsi E", "Kunci Jawaban", "Poin", "Level Kognitif", "Timestamp", "Gambar URL"];
 
 function _pastikanSheetBankSoalBenar() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -2855,7 +3203,8 @@ function _baris2Soal(row) {
     kunci: row[13].toString(),
     poin: Number(row[14]) || 0,
     levelKognitif: row[15] ? row[15].toString() : "",
-    timestamp: row[16] ? row[16].toString() : ""
+    timestamp: row[16] ? row[16].toString() : "",
+    gambarUrl: row[17] ? row[17].toString() : ""
   };
 }
 
@@ -2867,13 +3216,13 @@ function _baris2Soal(row) {
 function guruImportSoalMassal(guruUsername, guruNama, mapel, daftarSoal) {
   var sheet = _pastikanSheetBankSoalBenar();
   var waktu = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
-  var barisBaru = daftarSoal.map(function(data) {
+  var barisBaru = daftarSoal.map(function(data, idx) {
     var opsi = data.opsi || [];
     return [
-      _buatIdUnik("SOAL"), guruUsername, guruNama, mapel || "", data.kelas || "", data.topik || "",
+      _buatIdUnik("SOAL") + "-" + idx, guruUsername, guruNama, mapel || "", data.kelas || "", data.topik || "",
       data.tipe, data.pertanyaan,
       opsi[0] || "", opsi[1] || "", opsi[2] || "", opsi[3] || "", opsi[4] || "",
-      (data.kunci || "").toString(), Number(data.poin) || 0, data.levelKognitif || "", waktu
+      (data.kunci || "").toString(), Number(data.poin) || 0, data.levelKognitif || "", waktu, data.gambarUrl || ""
     ];
   });
 
@@ -2893,7 +3242,7 @@ function guruSimpanSoal(data) {
     "", data.guruUsername, data.guruNama, data.mapel, data.kelas, data.topik || "",
     data.tipe, data.pertanyaan,
     opsi[0] || "", opsi[1] || "", opsi[2] || "", opsi[3] || "", opsi[4] || "",
-    (data.kunci || "").toString(), Number(data.poin) || 0, data.levelKognitif || "", waktu
+    (data.kunci || "").toString(), Number(data.poin) || 0, data.levelKognitif || "", waktu, data.gambarUrl || ""
   ];
 
   if (data.idEdit) {
@@ -2999,7 +3348,7 @@ function aiBantuBuatSoal(topik, mapel, tipe) {
 // ==================== MODUL CBT / UJIAN TERJADWAL ====================
 // Sesi ujian mengambil soal dari Bank Soal, punya jadwal, durasi, token, dan kelas peserta sendiri.
 
-var HEADER_CBT_SESI = ["ID Sesi", "Guru Username", "Guru Nama", "Judul Ujian", "Jenis Ujian", "Mapel", "Kelas", "Daftar ID Soal", "Tanggal Mulai", "Jam Mulai", "Tanggal Selesai", "Jam Selesai", "Durasi Menit", "Token", "Acak Soal", "Acak Opsi", "Tampilkan Nilai", "Status", "Timestamp", "Mode Token"];
+var HEADER_CBT_SESI = ["ID Sesi", "Guru Username", "Guru Nama", "Judul Ujian", "Jenis Ujian", "Mapel", "Kelas", "Daftar ID Soal", "Tanggal Mulai", "Jam Mulai", "Tanggal Selesai", "Jam Selesai", "Durasi Menit", "Token", "Acak Soal", "Acak Opsi", "Tampilkan Nilai", "Status", "Timestamp", "Mode Token", "Sertakan Rekap", "Tampilkan Review", "ID Sesi Asal"];
 
 function _pastikanSheetCbtSesiBenar() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -3011,7 +3360,32 @@ function _pastikanSheetCbtSesiBenar() {
   }
   var headerSaatIni = sheet.getRange(1, 1, 1, HEADER_CBT_SESI.length).getValues()[0];
   if (!headerSaatIni[19]) sheet.getRange(1, 20).setValue("Mode Token"); // Migrasi: tambah kolom baru tanpa mengubah yang lama
+  if (!headerSaatIni[20]) sheet.getRange(1, 21).setValue("Sertakan Rekap");
+  if (!headerSaatIni[21]) sheet.getRange(1, 22).setValue("Tampilkan Review");
+  if (!headerSaatIni[22]) sheet.getRange(1, 23).setValue("ID Sesi Asal");
   return sheet;
+}
+
+/**
+ * Bandingkan 2 username dengan toleran. PENTING: username yang berupa NISN (angka semua,
+ * kadang berawalan 0) bisa "kehilangan" angka nol di depan kalau Google Sheets salah mengira
+ * itu angka biasa lalu menyimpannya sebagai Number bukan Text. Fallback ini membandingkan juga
+ * versi tanpa angka nol di depan, supaya data lama yang sudah kadung begini tetap bisa cocok.
+ */
+/** Bentuk kunci lookup yang ternormalisasi (lowercase, trim, tanpa angka nol di depan) — dipakai berpasangan dengan _samaUsername */
+function _normalisasiUsername(u) {
+  var s = (u === null || typeof u === "undefined") ? "" : u.toString().trim().toLowerCase();
+  var tanpaNolDepan = s.replace(/^0+/, "");
+  return tanpaNolDepan !== "" ? tanpaNolDepan : s;
+}
+
+function _samaUsername(a, b) {
+  var sa = (a === null || typeof a === "undefined") ? "" : a.toString().trim().toLowerCase();
+  var sb = (b === null || typeof b === "undefined") ? "" : b.toString().trim().toLowerCase();
+  if (sa === sb) return true;
+  var na = sa.replace(/^0+/, "");
+  var nb = sb.replace(/^0+/, "");
+  return na !== "" && na === nb;
 }
 
 function _buatTokenUjian() {
@@ -3091,11 +3465,15 @@ function _baris2Sesi(row) {
     tglMulai: row[8].toString(), jamMulai: _normalisasiJam(row[9]) || "00:00",
     tglSelesai: row[10].toString(), jamSelesai: _normalisasiJam(row[11]) || "23:59",
     durasiMenit: Number(row[12]) || 0, token: row[13].toString(),
-    acakSoal: row[14].toString() === "TRUE", acakOpsi: row[15].toString() === "TRUE",
-    tampilkanNilai: row[16].toString() === "TRUE",
+    acakSoal: row[14] === true || row[14].toString().toUpperCase() === "TRUE",
+    acakOpsi: row[15] === true || row[15].toString().toUpperCase() === "TRUE",
+    tampilkanNilai: row[16] === true || row[16].toString().toUpperCase() === "TRUE",
     statusManual: row[17] ? row[17].toString() : "Aktif",
     timestamp: row[18] ? row[18].toString() : "",
-    modeToken: row[19] ? row[19].toString() : "Manual"
+    modeToken: row[19] ? row[19].toString() : "Manual",
+    sertakanRekap: row[20] ? row[20].toString() !== "FALSE" : true, // Default TRUE untuk sesi lama sebelum fitur ini ada
+    tampilkanReview: row.length > 21 && (row[21] === true || row[21].toString().toUpperCase() === "TRUE"),
+    idSesiAsal: row.length > 22 && row[22] ? row[22].toString() : "" // Kosong = sesi biasa; terisi = ini sesi Remedial dari sesi asal ini
   };
 }
 
@@ -3112,6 +3490,7 @@ function _statusWaktuSesi(sesi) {
 /** data: {guruUsername,guruNama,judul,jenis,mapel,kelasArray,daftarIdSoal,tglMulai,jamMulai,tglSelesai,jamSelesai,durasiMenit,token,modeToken,acakSoal,acakOpsi,tampilkanNilai} */
 function guruBuatSesiUjian(data) {
   if (!data.daftarIdSoal || data.daftarIdSoal.length === 0) return { status: "ERROR", message: "Pilih minimal satu soal dari Bank Soal untuk sesi ini." };
+  data.daftarIdSoal = data.daftarIdSoal.filter(function(v, i, arr) { return arr.indexOf(v) === i; });
   if (!data.kelasArray || data.kelasArray.length === 0) return { status: "ERROR", message: "Pilih minimal satu kelas peserta." };
 
   var sheet = _pastikanSheetCbtSesiBenar();
@@ -3126,21 +3505,63 @@ function guruBuatSesiUjian(data) {
     data.tglMulai, data.jamMulai, data.tglSelesai, data.jamSelesai,
     Number(data.durasiMenit) || 0, token,
     data.acakSoal ? "TRUE" : "FALSE", data.acakOpsi ? "TRUE" : "FALSE", data.tampilkanNilai ? "TRUE" : "FALSE",
-    "Aktif", waktu, modeToken
+    "Aktif", waktu, modeToken, data.sertakanRekap === false ? "FALSE" : "TRUE", data.tampilkanReview ? "TRUE" : "FALSE", ""
   ]);
   var barisTerakhir = sheet.getLastRow();
   sheet.getRange(barisTerakhir, 9).setNumberFormat("@").setValue(data.tglMulai);
   sheet.getRange(barisTerakhir, 10).setNumberFormat("@").setValue(data.jamMulai);
   sheet.getRange(barisTerakhir, 11).setNumberFormat("@").setValue(data.tglSelesai);
   sheet.getRange(barisTerakhir, 12).setNumberFormat("@").setValue(data.jamSelesai);
+  // Kunci & tulis ulang kolom TRUE/FALSE sebagai teks eksplisit (setNumberFormat saja tidak retroaktif memperbaiki nilai yang sudah kadung dikonversi jadi Boolean oleh appendRow)
+  sheet.getRange(barisTerakhir, 15).setNumberFormat("@").setValue(data.acakSoal ? "TRUE" : "FALSE");
+  sheet.getRange(barisTerakhir, 16).setNumberFormat("@").setValue(data.acakOpsi ? "TRUE" : "FALSE");
+  sheet.getRange(barisTerakhir, 17).setNumberFormat("@").setValue(data.tampilkanNilai ? "TRUE" : "FALSE");
+  sheet.getRange(barisTerakhir, 21).setNumberFormat("@").setValue(data.sertakanRekap === false ? "FALSE" : "TRUE");
+  sheet.getRange(barisTerakhir, 22).setNumberFormat("@").setValue(data.tampilkanReview ? "TRUE" : "FALSE");
+  sheet.getRange(barisTerakhir, 23).setNumberFormat("@").setValue("");
 
   catatLogAktivitas(data.guruNama, "Buat Sesi CBT", "Membuat sesi ujian \"" + data.judul + "\" untuk kelas " + data.kelasArray.join(", "));
   var pesanToken = modeToken === "Otomatis" ? "Token otomatis berganti tiap 10 menit, lihat di daftar sesi." : "Token: " + token;
   return { status: "SUCCESS", message: "Sesi ujian \"" + data.judul + "\" berhasil dibuat. " + pesanToken, id: idBaru, token: token };
 }
 
+/** Duplikat sesi ujian yang sudah ada untuk dijadikan Remedial — soal & pengaturan disalin, guru tinggal atur ulang jadwal/token */
+function guruDuplikatSesiRemedial(idSesi) {
+  var sesiAsli = guruAmbilDetailSesi(idSesi);
+  if (!sesiAsli) return { status: "ERROR", message: "Sesi asal tidak ditemukan." };
+
+  var sheet = _pastikanSheetCbtSesiBenar();
+  var waktu = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+  var hariIni = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  var idBaru = _buatIdUnik("CBT");
+  var token = _buatTokenUjian();
+
+  sheet.appendRow([
+    idBaru, sesiAsli.guruUsername, sesiAsli.guruNama, sesiAsli.judul + " (Remedial)", "Remedial", sesiAsli.mapel,
+    sesiAsli.kelas.join(","), sesiAsli.daftarIdSoal.join(","),
+    hariIni, "07:00", hariIni, "23:59",
+    sesiAsli.durasiMenit, token, "FALSE", "FALSE", "TRUE",
+    "Aktif", waktu, "Manual", "TRUE", sesiAsli.tampilkanReview ? "TRUE" : "FALSE", idSesi.toString()
+  ]);
+  var barisTerakhir = sheet.getLastRow();
+  sheet.getRange(barisTerakhir, 9).setNumberFormat("@").setValue(hariIni);
+  sheet.getRange(barisTerakhir, 10).setNumberFormat("@").setValue("07:00");
+  sheet.getRange(barisTerakhir, 15).setNumberFormat("@").setValue("FALSE");
+  sheet.getRange(barisTerakhir, 16).setNumberFormat("@").setValue("FALSE");
+  sheet.getRange(barisTerakhir, 17).setNumberFormat("@").setValue("TRUE");
+  sheet.getRange(barisTerakhir, 21).setNumberFormat("@").setValue("TRUE");
+  sheet.getRange(barisTerakhir, 22).setNumberFormat("@").setValue(sesiAsli.tampilkanReview ? "TRUE" : "FALSE");
+  sheet.getRange(barisTerakhir, 23).setNumberFormat("@").setValue(idSesi.toString());
+  sheet.getRange(barisTerakhir, 11).setNumberFormat("@").setValue(hariIni);
+  sheet.getRange(barisTerakhir, 12).setNumberFormat("@").setValue("23:59");
+
+  catatLogAktivitas(sesiAsli.guruNama, "Buat Sesi Remedial", "Menduplikat \"" + sesiAsli.judul + "\" jadi sesi remedial.");
+  return { status: "SUCCESS", message: "Sesi remedial berhasil dibuat dari \"" + sesiAsli.judul + "\". Silakan atur jadwal & token, lalu bagikan hanya ke siswa yang perlu remedial.", idBaru: idBaru };
+}
+
 function guruEditSesiUjian(idSesi, data) {
   if (!data.daftarIdSoal || data.daftarIdSoal.length === 0) return { status: "ERROR", message: "Pilih minimal satu soal dari Bank Soal untuk sesi ini." };
+  data.daftarIdSoal = data.daftarIdSoal.filter(function(v, i, arr) { return arr.indexOf(v) === i; });
   if (!data.kelasArray || data.kelasArray.length === 0) return { status: "ERROR", message: "Pilih minimal satu kelas peserta." };
 
   var sheet = _pastikanSheetCbtSesiBenar();
@@ -3155,13 +3576,19 @@ function guruEditSesiUjian(idSesi, data) {
         data.tglMulai, data.jamMulai, data.tglSelesai, data.jamSelesai,
         Number(data.durasiMenit) || 0, token,
         data.acakSoal ? "TRUE" : "FALSE", data.acakOpsi ? "TRUE" : "FALSE", data.tampilkanNilai ? "TRUE" : "FALSE",
-        dataSheet[i][17], dataSheet[i][18], modeToken
+        dataSheet[i][17], dataSheet[i][18], modeToken, data.sertakanRekap === false ? "FALSE" : "TRUE", data.tampilkanReview ? "TRUE" : "FALSE",
+        dataSheet[i].length > 22 ? dataSheet[i][22] : "" // ID Sesi Asal dipertahankan, tidak bisa diubah lewat form edit
       ];
       sheet.getRange(i + 1, 1, 1, baris.length).setValues([baris]);
       sheet.getRange(i + 1, 9).setNumberFormat("@").setValue(data.tglMulai);
       sheet.getRange(i + 1, 10).setNumberFormat("@").setValue(data.jamMulai);
       sheet.getRange(i + 1, 11).setNumberFormat("@").setValue(data.tglSelesai);
       sheet.getRange(i + 1, 12).setNumberFormat("@").setValue(data.jamSelesai);
+      sheet.getRange(i + 1, 15).setNumberFormat("@").setValue(data.acakSoal ? "TRUE" : "FALSE");
+      sheet.getRange(i + 1, 16).setNumberFormat("@").setValue(data.acakOpsi ? "TRUE" : "FALSE");
+      sheet.getRange(i + 1, 17).setNumberFormat("@").setValue(data.tampilkanNilai ? "TRUE" : "FALSE");
+      sheet.getRange(i + 1, 21).setNumberFormat("@").setValue(data.sertakanRekap === false ? "FALSE" : "TRUE");
+      sheet.getRange(i + 1, 22).setNumberFormat("@").setValue(data.tampilkanReview ? "TRUE" : "FALSE");
       return { status: "SUCCESS", message: "Sesi ujian berhasil diperbarui." };
     }
   }
@@ -3223,7 +3650,7 @@ function guruAmbilDetailSesi(idSesi) {
 
 // ---------- Hasil & Jawaban Ujian ----------
 
-var HEADER_HASIL_UJIAN = ["ID Hasil", "ID Sesi", "Username", "Nama Siswa", "Kelas", "Skor Objektif", "Skor Maksimal", "Nilai Objektif", "Nilai Essay", "Nilai Akhir", "Status", "Waktu Mulai", "Waktu Selesai", "Jumlah Pelanggaran", "Catatan Waktu"];
+var HEADER_HASIL_UJIAN = ["ID Hasil", "ID Sesi", "Username", "Nama Siswa", "Kelas", "Skor Objektif", "Skor Maksimal", "Nilai Objektif", "Nilai Essay", "Nilai Akhir", "Status", "Waktu Mulai", "Waktu Selesai", "Jumlah Pelanggaran", "Catatan Waktu", "Nilai Akhir Sebelum Edit", "Catatan Edit Nilai", "Nilai Rekap Final", "Sumber Nilai Rekap"];
 
 function _pastikanSheetHasilUjianBenar() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -3235,6 +3662,10 @@ function _pastikanSheetHasilUjianBenar() {
   }
   var headerSaatIni = sheet.getRange(1, 1, 1, HEADER_HASIL_UJIAN.length).getValues()[0];
   if (!headerSaatIni[14]) sheet.getRange(1, 15).setValue("Catatan Waktu"); // Migrasi: tambah kolom baru tanpa mengubah yang lama
+  if (!headerSaatIni[15]) sheet.getRange(1, 16).setValue("Nilai Akhir Sebelum Edit");
+  if (!headerSaatIni[16]) sheet.getRange(1, 17).setValue("Catatan Edit Nilai");
+  if (!headerSaatIni[17]) sheet.getRange(1, 18).setValue("Nilai Rekap Final");
+  if (!headerSaatIni[18]) sheet.getRange(1, 19).setValue("Sumber Nilai Rekap");
   return sheet;
 }
 
@@ -3265,8 +3696,14 @@ function siswaAmbilDaftarUjianTersedia(kelasSiswa, usernameSiswa) {
 
   var petaHasil = {};
   for (var h = 1; h < dataHasil.length; h++) {
-    if (dataHasil[h][2].toString().trim() === usernameSiswa.toString().trim()) {
-      petaHasil[dataHasil[h][1].toString()] = { status: dataHasil[h][10].toString(), nilaiAkhir: dataHasil[h][9] };
+    if (_samaUsername(dataHasil[h][2], usernameSiswa)) {
+      var idSesiBaris = dataHasil[h][1].toString();
+      var statusBaris = dataHasil[h][10].toString();
+      var yangSudahAda = petaHasil[idSesiBaris];
+      // Kalau ada baris duplikat (data lama dari sebelum diperbaiki), prioritaskan status FINAL
+      // (Selesai/Terkunci) — jangan sampai baris "Sedang Mengerjakan" yang lebih baru menimpa hasil yang sudah final.
+      if (yangSudahAda && (yangSudahAda.status === "Selesai" || yangSudahAda.status === "Terkunci")) continue;
+      petaHasil[idSesiBaris] = { status: statusBaris, nilaiAkhir: dataHasil[h][9], idHasil: dataHasil[h][0].toString() };
     }
   }
 
@@ -3283,7 +3720,8 @@ function siswaAmbilDaftarUjianTersedia(kelasSiswa, usernameSiswa) {
     sesi.sudahDikerjakan = !!hasilSiswa && (hasilSiswa.status === "Selesai" || hasilSiswa.status === "Terkunci");
     sesi.sedangDikerjakan = !!hasilSiswa && hasilSiswa.status === "Sedang Mengerjakan";
     sesi.statusPengerjaan = hasilSiswa ? hasilSiswa.status : "";
-    sesi.nilaiSaya = sesi.sudahDikerjakan ? hasilSiswa.nilaiAkhir : null;
+    sesi.nilaiSaya = sesi.sudahDikerjakan ? (sesi.tampilkanNilai ? hasilSiswa.nilaiAkhir : null) : null;
+    sesi.idHasilSaya = hasilSiswa ? hasilSiswa.idHasil : "";
     delete sesi.daftarIdSoal;
     delete sesi.token;
     hasil.push(sesi);
@@ -3311,32 +3749,42 @@ function siswaMulaiUjian(idSesi, tokenInput, usernameSiswa, namaSiswa, kelasSisw
     return { status: "ERROR", message: "Token yang Anda masukkan salah. Silakan tanyakan token kepada guru pengawas." };
   }
 
-  var sheetHasil = _pastikanSheetHasilUjianBenar();
-  var dataHasil = sheetHasil.getDataRange().getValues();
-  var idHasil = "", waktuMulaiTersimpan = "", sudahAda = false;
+  // LockService: cegah race condition kalau tombol "Mulai Ujian" diklik dobel/cepat —
+  // tanpa ini, dua request bersamaan bisa sama-sama menganggap "belum ada data" dan
+  // menciptakan DUA baris Hasil_Ujian untuk siswa+sesi yang sama (bikin data ganda/rekap kacau).
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var sheetHasil = _pastikanSheetHasilUjianBenar();
+    var dataHasil = sheetHasil.getDataRange().getValues();
+    var idHasil = "", waktuMulaiTersimpan = "", sudahAda = false;
 
-  for (var i = 1; i < dataHasil.length; i++) {
-    if (dataHasil[i][1].toString() === idSesi.toString() && dataHasil[i][2].toString().trim() === usernameSiswa.toString().trim()) {
-      idHasil = dataHasil[i][0].toString();
-      if (dataHasil[i][10].toString() === "Selesai") {
-        return { status: "ERROR", message: "Anda sudah menyelesaikan ujian ini sebelumnya." };
+    for (var i = 1; i < dataHasil.length; i++) {
+      if (dataHasil[i][1].toString().trim() === idSesi.toString().trim() && _samaUsername(dataHasil[i][2], usernameSiswa)) {
+        idHasil = dataHasil[i][0].toString();
+        if (dataHasil[i][10].toString() === "Selesai") {
+          return { status: "ERROR", message: "Anda sudah menyelesaikan ujian ini sebelumnya." };
+        }
+        if (dataHasil[i][10].toString() === "Terkunci") {
+          return { status: "ERROR", message: "Ujian Anda sedang dikunci karena terindikasi ada pelanggaran (keluar layar/pindah tab berulang kali). Silakan hubungi guru pengawas untuk membuka kembali." };
+        }
+        waktuMulaiTersimpan = dataHasil[i][11].toString();
+        sudahAda = true;
+        break;
       }
-      if (dataHasil[i][10].toString() === "Terkunci") {
-        return { status: "ERROR", message: "Ujian Anda sedang dikunci karena terindikasi ada pelanggaran (keluar layar/pindah tab berulang kali). Silakan hubungi guru pengawas untuk membuka kembali." };
-      }
-      waktuMulaiTersimpan = dataHasil[i][11].toString();
-      sudahAda = true;
-      break;
     }
-  }
 
-  if (!sudahAda) {
-    idHasil = _buatIdUnik("HSL");
-    var waktuMulai = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
-    sheetHasil.appendRow([idHasil, idSesi, usernameSiswa, namaSiswa, kelasSiswa, 0, 0, 0, "", 0, "Sedang Mengerjakan", waktuMulai, "", 0]);
-    var br = sheetHasil.getLastRow();
-    sheetHasil.getRange(br, 12).setNumberFormat("@").setValue(waktuMulai);
-    waktuMulaiTersimpan = waktuMulai;
+    if (!sudahAda) {
+      idHasil = _buatIdUnik("HSL");
+      var waktuMulai = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+      sheetHasil.appendRow([idHasil, idSesi, usernameSiswa, namaSiswa, kelasSiswa, 0, 0, 0, "", 0, "Sedang Mengerjakan", waktuMulai, "", 0]);
+      var br = sheetHasil.getLastRow();
+      sheetHasil.getRange(br, 3).setNumberFormat("@").setValue(usernameSiswa); // Kunci Username sebagai TEKS (jangan sampai NISN kehilangan angka 0 di depan)
+      sheetHasil.getRange(br, 12).setNumberFormat("@").setValue(waktuMulai);
+      waktuMulaiTersimpan = waktuMulai;
+    }
+  } finally {
+    lock.releaseLock();
   }
 
   var sheetBankSoal = _pastikanSheetBankSoalBenar();
@@ -3353,7 +3801,7 @@ function siswaMulaiUjian(idSesi, tokenInput, usernameSiswa, namaSiswa, kelasSisw
     var opsiBerlabel = [];
     soal.opsi.forEach(function(teks, idx) { if (teks) opsiBerlabel.push({ label: labelHuruf[idx], teks: teks }); });
     if (sesi.acakOpsi && (soal.tipe === "PG" || soal.tipe === "PGK")) opsiBerlabel = _kocokArray(opsiBerlabel);
-    soalUntukSiswa.push({ id: soal.id, tipe: soal.tipe, pertanyaan: soal.pertanyaan, opsi: opsiBerlabel, poin: soal.poin });
+    soalUntukSiswa.push({ id: soal.id, tipe: soal.tipe, pertanyaan: soal.pertanyaan, opsi: opsiBerlabel, poin: soal.poin, gambarUrl: soal.gambarUrl || "" });
   });
 
   // Sisa waktu dihitung dari waktu mulai TERSIMPAN di server (bukan waktu klik saat itu),
@@ -3365,6 +3813,7 @@ function siswaMulaiUjian(idSesi, tokenInput, usernameSiswa, namaSiswa, kelasSisw
 
   return {
     status: "SUCCESS", idHasil: idHasil, judul: sesi.judul, jenis: sesi.jenis, mapel: sesi.mapel,
+    acakOpsi: sesi.acakOpsi,
     soal: soalUntukSiswa, epochMulai: epochMulai, epochBatasAkhir: epochBatasAkhir, epochSekarang: new Date().getTime(),
     jawabanTersimpan: sudahAda ? _siswaAmbilJawabanTersimpan(idHasil) : {}
   };
@@ -3396,6 +3845,7 @@ function siswaSimpanJawabanOtomatis(idHasil, idSesi, usernameSiswa, idSoal, jawa
     }
   }
   sheet.appendRow([idHasil, idSesi, usernameSiswa, idSoal, jawabanTeks, "", "", ""]);
+  sheet.getRange(sheet.getLastRow(), 3).setNumberFormat("@").setValue(usernameSiswa);
   return { status: "SUCCESS" };
 }
 
@@ -3412,6 +3862,7 @@ function _siswaAmbilJawabanTersimpan(idHasil) {
   return peta;
 }
 function siswaSubmitUjian(idHasil, idSesi, usernameSiswa, jawabanArray, paksaKarenaPelanggaran) {
+  var iniAutoFinalisasi = !jawabanArray; // Dipanggil oleh jaring pengaman (waktu habis, browser tertutup), bukan klik siswa
   var sesi = guruAmbilDetailSesi(idSesi);
   if (!sesi) return { status: "ERROR", message: "Sesi ujian tidak ditemukan." };
 
@@ -3435,6 +3886,17 @@ function siswaSubmitUjian(idHasil, idSesi, usernameSiswa, jawabanArray, paksaKar
   var dataJawabanSaatIni = sheetJawaban.getDataRange().getValues();
   var skorDiperoleh = 0, skorMaksimal = 0, adaEssay = false;
 
+  // Kalau jawabanArray tidak dikirim (dipanggil oleh jaring pengaman auto-finalisasi, bukan dari
+  // klik siswa langsung), ambil jawaban terakhir yang sempat ter-autosave sebagai gantinya.
+  if (!jawabanArray) {
+    jawabanArray = [];
+    for (var jj = 1; jj < dataJawabanSaatIni.length; jj++) {
+      if (dataJawabanSaatIni[jj][0].toString() === idHasil.toString()) {
+        jawabanArray.push({ idSoal: dataJawabanSaatIni[jj][3].toString(), jawaban: dataJawabanSaatIni[jj][4] });
+      }
+    }
+  }
+
   sesi.daftarIdSoal.forEach(function(idSoal) {
     var soal = petaSoal[idSoal];
     if (!soal) return;
@@ -3453,6 +3915,9 @@ function siswaSubmitUjian(idHasil, idSesi, usernameSiswa, jawabanArray, paksaKar
       var kunciSet = soal.kunci.split(",").map(function(x) { return x.trim().toUpperCase(); }).filter(Boolean).sort();
       benar = (jawabSet.length > 0 && jawabSet.join(",") === kunciSet.join(",")) ? "TRUE" : "FALSE";
       if (benar === "TRUE") skorSoal = soal.poin;
+    } else if (soal.tipe === "BS") {
+      benar = (jawabanTeks.trim().toLowerCase() === soal.kunci.trim().toLowerCase() && jawabanTeks.trim() !== "") ? "TRUE" : "FALSE";
+      if (benar === "TRUE") skorSoal = soal.poin;
     } else if (soal.tipe === "Isian") {
       benar = (jawabanTeks.trim().toLowerCase() === soal.kunci.trim().toLowerCase() && jawabanTeks.trim() !== "") ? "TRUE" : "FALSE";
       if (benar === "TRUE") skorSoal = soal.poin;
@@ -3468,9 +3933,14 @@ function siswaSubmitUjian(idHasil, idSesi, usernameSiswa, jawabanArray, paksaKar
       if (dataJawabanSaatIni[j][0].toString() === idHasil.toString() && dataJawabanSaatIni[j][3].toString() === idSoal.toString()) { barisDitemukan = j; break; }
     }
     if (barisDitemukan >= 0) {
-      sheetJawaban.getRange(barisDitemukan + 1, 5, 1, 3).setValues([[jawabanTeks, benar, skorSoal]]);
+      sheetJawaban.getRange(barisDitemukan + 1, 5).setValue(jawabanTeks);
+      sheetJawaban.getRange(barisDitemukan + 1, 6).setNumberFormat("@").setValue(benar);
+      sheetJawaban.getRange(barisDitemukan + 1, 7).setValue(skorSoal);
     } else {
       sheetJawaban.appendRow([idHasil, idSesi, usernameSiswa, idSoal, jawabanTeks, benar, skorSoal, ""]);
+      var brJwb = sheetJawaban.getLastRow();
+      sheetJawaban.getRange(brJwb, 3).setNumberFormat("@").setValue(usernameSiswa);
+      sheetJawaban.getRange(brJwb, 6).setNumberFormat("@").setValue(benar); // Kunci kolom Benar sebagai TEKS (jangan sampai "TRUE"/"FALSE" jadi Boolean asli)
     }
   });
 
@@ -3487,12 +3957,16 @@ function siswaSubmitUjian(idHasil, idSesi, usernameSiswa, jawabanArray, paksaKar
   var batasWaktuSesi = new Date(sesi.tglSelesai + "T" + (sesi.jamSelesai || "23:59") + ":00").getTime();
   var epochBatasAkhir = Math.min(batasWaktuDurasi, batasWaktuSesi);
   var terlambatMs = new Date(waktuSelesai.replace(" ", "T")).getTime() - epochBatasAkhir;
-  var catatanWaktu = terlambatMs > TOLERANSI_MS ? ("Submit terlambat ~" + Math.round(terlambatMs / 60000) + " menit dari batas waktu seharusnya") : "";
+  var catatanWaktu = iniAutoFinalisasi
+    ? "Waktu habis — dinilai otomatis oleh sistem (siswa tidak sempat klik selesai, kemungkinan koneksi/perangkat terputus)"
+    : (terlambatMs > TOLERANSI_MS ? ("Submit terlambat ~" + Math.round(terlambatMs / 60000) + " menit dari batas waktu seharusnya") : "");
 
-  sheetHasil.getRange(barisHasil + 1, 6, 1, 9).setValues([[
-    skorDiperoleh, skorMaksimal, nilaiObjektif, adaEssay ? "Menunggu" : "-", nilaiAkhir, statusAkhir, dataHasil[barisHasil][11], waktuSelesai, catatanWaktu
+  sheetHasil.getRange(barisHasil + 1, 6, 1, 5).setValues([[
+    skorDiperoleh, skorMaksimal, nilaiObjektif, adaEssay ? "Menunggu" : "-", nilaiAkhir
   ]]);
-  sheetHasil.getRange(barisHasil + 1, 13).setNumberFormat("@").setValue(waktuSelesai);
+  sheetHasil.getRange(barisHasil + 1, 11).setValue(statusAkhir); // Kolom Status
+  sheetHasil.getRange(barisHasil + 1, 13).setNumberFormat("@").setValue(waktuSelesai); // Kolom Waktu Selesai
+  sheetHasil.getRange(barisHasil + 1, 15).setValue(catatanWaktu); // Kolom Catatan Waktu (SEBELUMNYA SALAH: menimpa kolom Jumlah Pelanggaran)
 
   return {
     status: "SUCCESS",
@@ -3547,9 +4021,205 @@ function guruBukaKuncPelanggaran(idHasil) {
 }
 
 /** Rekap hasil satu sesi ujian: semua siswa di kelas peserta, lengkap status & nilai (guru) */
+/**
+ * JARING PENGAMAN: cari semua percobaan ujian di 1 sesi yang statusnya masih "Sedang Mengerjakan"
+ * tapi waktunya SUDAH LEWAT batas (durasi habis / sesi sudah ditutup) — biasanya karena siswa
+ * menutup browser/perangkat mati mendadak sehingga tidak sempat klik "Selesai" sendiri.
+ * Nilai tetap dihitung otomatis dari jawaban terakhir yang ter-autosave.
+ */
+function _autoFinalisasiUjianTerlambat(idSesi) {
+  var sesi = guruAmbilDetailSesi(idSesi);
+  if (!sesi) return;
+
+  var sheetHasil = _pastikanSheetHasilUjianBenar();
+  var dataHasil = sheetHasil.getDataRange().getValues();
+  var batasWaktuSesi = new Date(sesi.tglSelesai + "T" + (sesi.jamSelesai || "23:59") + ":00").getTime();
+  var sekarang = new Date().getTime();
+  var TOLERANSI_MS = 90 * 1000;
+  var daftarTerlambat = [];
+
+  for (var i = 1; i < dataHasil.length; i++) {
+    if (dataHasil[i][1].toString() !== idSesi.toString()) continue;
+    if (dataHasil[i][10].toString() !== "Sedang Mengerjakan") continue;
+    var epochMulai = new Date(dataHasil[i][11].toString().replace(" ", "T")).getTime();
+    var batasWaktuDurasi = epochMulai + (sesi.durasiMenit * 60000);
+    var epochBatasAkhir = Math.min(batasWaktuDurasi, batasWaktuSesi);
+    if (sekarang - epochBatasAkhir > TOLERANSI_MS) {
+      daftarTerlambat.push({ idHasil: dataHasil[i][0].toString(), username: dataHasil[i][2].toString() });
+    }
+  }
+
+  daftarTerlambat.forEach(function(item) {
+    try { siswaSubmitUjian(item.idHasil, idSesi, item.username, null, false); } catch (e) { /* lewati kalau ada error, jangan sampai gagalkan seluruh rekap */ }
+  });
+}
+
+/**
+ * Guru mengubah manual Nilai Akhir hasil ujian siswa (mis. pengurangan nilai karena kecurangan).
+ * Berlaku untuk sesi apapun (remedial maupun bukan). Nilai asli sebelum diedit disimpan sekali saja
+ * (baris pertama kali diedit) supaya bisa dilihat riwayatnya dan tidak tertimpa kalau diedit berkali-kali.
+ */
+function guruEditNilaiAkhirUjian(idHasil, nilaiBaru, alasan, guruNama) {
+  var nilai = Number(nilaiBaru);
+  if (isNaN(nilai) || nilai < 0 || nilai > 100) return { status: "ERROR", message: "Nilai harus berupa angka 0-100." };
+  if (!alasan || !alasan.toString().trim()) return { status: "ERROR", message: "Alasan perubahan nilai wajib diisi." };
+
+  var sheet = _pastikanSheetHasilUjianBenar();
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0].toString().trim() !== idHasil.toString().trim()) continue;
+    var baris = i + 1;
+    var nilaiSebelumnya = data[i][9];
+    // Simpan nilai asli hanya sekali, di edit pertama — biar riwayat nilai awal (hasil hitung sistem) tidak hilang walau diedit berkali-kali
+    if (data[i].length <= 15 || data[i][15] === "" || data[i][15] === null || typeof data[i][15] === "undefined") {
+      sheet.getRange(baris, 16).setValue(nilaiSebelumnya);
+    }
+    var waktu = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm");
+    var catatan = "[" + waktu + " oleh " + (guruNama || "Guru") + "] " + alasan.toString().trim() + " (nilai sebelumnya: " + nilaiSebelumnya + " -> " + nilai + ")";
+    var catatanLama = data[i].length > 16 && data[i][16] ? data[i][16].toString() + "\n" : "";
+    sheet.getRange(baris, 10).setValue(nilai); // Nilai Akhir
+    sheet.getRange(baris, 17).setValue(catatanLama + catatan); // Catatan Edit Nilai
+
+    catatLogAktivitas(guruNama || "Guru", "Edit Nilai Ujian", "Mengubah nilai " + data[i][3] + " dari " + nilaiSebelumnya + " menjadi " + nilai + ". Alasan: " + alasan);
+    return { status: "SUCCESS", message: "Nilai akhir berhasil diubah menjadi " + nilai + ".", nilaiBaru: nilai };
+  }
+  return { status: "ERROR", message: "Data hasil ujian tidak ditemukan." };
+}
+
+/**
+ * Tentukan nilai yang dipakai untuk Rekap Nilai Kelas pada siswa+sesi tertentu (idHasil = baris Hasil_Ujian di SESI ASAL, bukan remedial):
+ * - mode "Otomatis": ambil nilai TERTINGGI antara Nilai Akhir sesi asal saat ini vs nilai remedial terbaik yang tertaut ke sesi ini.
+ * - mode "Manual": pakai nilaiManual yang diinput guru sendiri.
+ */
+function guruSimpanNilaiRekapEfektif(idHasil, mode, nilaiManual, guruNama) {
+  _pastikanSemuaRemedialTertaut();
+  var sheetHasil = _pastikanSheetHasilUjianBenar();
+  var dataHasil = sheetHasil.getDataRange().getValues();
+  var baris = -1, barisData = null;
+  for (var i = 1; i < dataHasil.length; i++) {
+    if (dataHasil[i][0].toString().trim() === idHasil.toString().trim()) { baris = i + 1; barisData = dataHasil[i]; break; }
+  }
+  if (baris === -1) return { status: "ERROR", message: "Data hasil ujian tidak ditemukan." };
+
+  var idSesiAsal = barisData[1].toString().trim();
+  var nilaiFinal, sumber;
+
+  if (mode === "Manual") {
+    var nilai = Number(nilaiManual);
+    if (isNaN(nilai) || nilai < 0 || nilai > 100) return { status: "ERROR", message: "Nilai manual harus berupa angka 0-100." };
+    nilaiFinal = nilai;
+    sumber = "Manual";
+  } else {
+    var nilaiAsalSaatIni = Number(barisData[9]) || 0;
+    var nilaiRemedialTerbaik = -1;
+
+    var sheetSesi = _pastikanSheetCbtSesiBenar();
+    var dataSesi = sheetSesi.getDataRange().getValues();
+    var idSesiRemedialTerkait = [];
+    for (var rs = 1; rs < dataSesi.length; rs++) {
+      var idAsalBaris = dataSesi[rs].length > 22 && dataSesi[rs][22] ? dataSesi[rs][22].toString().trim() : "";
+      if (idAsalBaris === idSesiAsal) idSesiRemedialTerkait.push(dataSesi[rs][0].toString());
+    }
+    if (idSesiRemedialTerkait.length > 0) {
+      var usernameSiswa = _normalisasiUsername(barisData[2]);
+      for (var h = 1; h < dataHasil.length; h++) {
+        if (idSesiRemedialTerkait.indexOf(dataHasil[h][1].toString().trim()) === -1) continue;
+        if (_normalisasiUsername(dataHasil[h][2]) !== usernameSiswa) continue;
+        if (dataHasil[h][10].toString() !== "Selesai" && dataHasil[h][10].toString() !== "Terkunci") continue;
+        var nilaiRemH = Number(dataHasil[h][9]) || 0;
+        if (nilaiRemH > nilaiRemedialTerbaik) nilaiRemedialTerbaik = nilaiRemH;
+      }
+    }
+    nilaiFinal = nilaiRemedialTerbaik > nilaiAsalSaatIni ? nilaiRemedialTerbaik : nilaiAsalSaatIni;
+    sumber = "Otomatis-Tertinggi";
+  }
+
+  sheetHasil.getRange(baris, 18).setValue(nilaiFinal); // Nilai Rekap Final
+  sheetHasil.getRange(baris, 19).setValue(sumber); // Sumber Nilai Rekap
+  catatLogAktivitas(guruNama || "Guru", "Set Nilai Rekap", "Nilai rekap " + barisData[3] + " ditetapkan " + nilaiFinal + " (" + sumber + ").");
+  return { status: "SUCCESS", message: "Nilai rekap berhasil ditetapkan: " + nilaiFinal + " (" + sumber + ").", nilaiFinal: nilaiFinal, sumber: sumber };
+}
+
+/**
+ * Reset ujian seorang siswa (berlaku untuk sesi utama maupun remedial) agar siswa bisa
+ * mengerjakan LAGI dari awal pada sesi yang sama, tanpa guru perlu membuat sesi baru.
+ * Menghapus baris Hasil_Ujian + semua jawaban tersimpan siswa itu untuk sesi ini.
+ * Nilai lama dicatat ke log aktivitas dulu sebelum dihapus, supaya masih ada jejaknya.
+ */
+function guruResetUjianSiswa(idHasil, guruNama) {
+  var sheetHasil = _pastikanSheetHasilUjianBenar();
+  var dataHasil = sheetHasil.getDataRange().getValues();
+  var barisHasil = -1, infoSiswa = null;
+  for (var i = 1; i < dataHasil.length; i++) {
+    if (dataHasil[i][0].toString().trim() === idHasil.toString().trim()) {
+      barisHasil = i + 1;
+      infoSiswa = dataHasil[i];
+      break;
+    }
+  }
+  if (barisHasil === -1) return { status: "ERROR", message: "Data hasil ujian tidak ditemukan." };
+
+  var namaSiswa = infoSiswa[3].toString();
+  var idSesi = infoSiswa[1].toString();
+  var statusLama = infoSiswa[10].toString();
+  var nilaiLama = infoSiswa[9];
+
+  // Hapus semua jawaban tersimpan milik idHasil ini
+  var sheetJawaban = _pastikanSheetJawabanSiswaBenar();
+  var dataJawaban = sheetJawaban.getDataRange().getValues();
+  for (var j = dataJawaban.length - 1; j >= 1; j--) {
+    if (dataJawaban[j][0].toString().trim() === idHasil.toString().trim()) {
+      sheetJawaban.deleteRow(j + 1);
+    }
+  }
+
+  // Hapus baris Hasil_Ujian-nya sendiri, supaya siswaMulaiUjian() membuatkan baris baru yang bersih saat siswa mulai lagi
+  sheetHasil.deleteRow(barisHasil);
+
+  catatLogAktivitas(guruNama || "Guru", "Reset Ujian Siswa",
+    namaSiswa + " di-reset (status sebelumnya: " + statusLama + ", nilai sebelumnya: " + nilaiLama + ") — siswa bisa mengerjakan ulang.");
+
+  return { status: "SUCCESS", message: namaSiswa + " berhasil di-reset. Siswa sekarang bisa mengerjakan ulang ujian ini dari awal." };
+}
+
 function guruAmbilRekapHasilSesi(idSesi) {
+  _pastikanSemuaRemedialTertaut();
+  _autoFinalisasiUjianTerlambat(idSesi);
   var sesi = guruAmbilDetailSesi(idSesi);
   if (!sesi) return { status: "ERROR", message: "Sesi tidak ditemukan." };
+
+  // Sesi ini remedial dari sesi lain -> siapkan peta nilai asal untuk pembanding
+  var petaNilaiAsal = {};
+  if (sesi.idSesiAsal) {
+    var sheetHasilAsal = _pastikanSheetHasilUjianBenar();
+    var dataHasilAsal = sheetHasilAsal.getDataRange().getValues();
+    for (var a = 1; a < dataHasilAsal.length; a++) {
+      if (dataHasilAsal[a][1].toString().trim() !== sesi.idSesiAsal.toString().trim()) continue;
+      if (dataHasilAsal[a][10].toString() !== "Selesai" && dataHasilAsal[a][10].toString() !== "Terkunci") continue;
+      petaNilaiAsal[_normalisasiUsername(dataHasilAsal[a][2])] = Number(dataHasilAsal[a][9]) || 0;
+    }
+  }
+
+  // Sesi ini punya sesi remedial turunannya -> siapkan peta nilai remedial (ambil yang tertinggi kalau lebih dari satu) untuk pembanding
+  var petaNilaiRemedial = {};
+  var sheetSesiCek = _pastikanSheetCbtSesiBenar();
+  var dataSesiCek = sheetSesiCek.getDataRange().getValues();
+  var idSesiRemedialTerkait = [];
+  for (var rs = 1; rs < dataSesiCek.length; rs++) {
+    var idAsalBaris = dataSesiCek[rs].length > 22 && dataSesiCek[rs][22] ? dataSesiCek[rs][22].toString().trim() : "";
+    if (idAsalBaris === idSesi.toString().trim()) idSesiRemedialTerkait.push(dataSesiCek[rs][0].toString());
+  }
+  if (idSesiRemedialTerkait.length > 0) {
+    var sheetHasilRem = _pastikanSheetHasilUjianBenar();
+    var dataHasilRem = sheetHasilRem.getDataRange().getValues();
+    for (var rh = 1; rh < dataHasilRem.length; rh++) {
+      if (idSesiRemedialTerkait.indexOf(dataHasilRem[rh][1].toString().trim()) === -1) continue;
+      if (dataHasilRem[rh][10].toString() !== "Selesai" && dataHasilRem[rh][10].toString() !== "Terkunci") continue;
+      var keyRem = _normalisasiUsername(dataHasilRem[rh][2]);
+      var nilaiRem = Number(dataHasilRem[rh][9]) || 0;
+      if (typeof petaNilaiRemedial[keyRem] === "undefined" || nilaiRem > petaNilaiRemedial[keyRem]) petaNilaiRemedial[keyRem] = nilaiRem;
+    }
+  }
 
   var sheetUser = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
   var dataUser = sheetUser.getDataRange().getValues();
@@ -3566,7 +4236,14 @@ function guruAmbilRekapHasilSesi(idSesi) {
   var dataHasil = sheetHasil.getDataRange().getValues();
   var petaHasil = {};
   for (var i = 1; i < dataHasil.length; i++) {
-    if (dataHasil[i][1].toString() === idSesi.toString()) petaHasil[dataHasil[i][2].toString().trim()] = dataHasil[i];
+    if (dataHasil[i][1].toString().trim() === idSesi.toString().trim()) {
+      var unameBaris = _normalisasiUsername(dataHasil[i][2]);
+      var yangSudahAda = petaHasil[unameBaris];
+      // Kalau ada baris duplikat (data lama dari sebelum diperbaiki), prioritaskan status FINAL
+      // (Selesai/Terkunci) — jangan sampai baris "Sedang Mengerjakan" yang lebih baru menimpa hasil yang sudah final.
+      if (yangSudahAda && (yangSudahAda[10].toString() === "Selesai" || yangSudahAda[10].toString() === "Terkunci")) continue;
+      petaHasil[unameBaris] = dataHasil[i];
+    }
   }
 
   var sheetBankSoal = _pastikanSheetBankSoalBenar();
@@ -3576,18 +4253,53 @@ function guruAmbilRekapHasilSesi(idSesi) {
   var adaSoalEssay = sesi.daftarIdSoal.some(function(id) { return mapTipeSoal[id] === "Essay"; });
 
   var hasil = daftarSiswa.map(function(sw) {
-    var h = petaHasil[sw.username];
-    if (!h) return { username: sw.username, nama: sw.nama, kelas: sw.kelas, status: "Belum Mengerjakan", nilaiObjektif: "-", nilaiEssay: "-", nilaiAkhir: "-", idHasil: "" };
+    var key = _normalisasiUsername(sw.username);
+    var h = petaHasil[key];
+    var nilaiAsal = sesi.idSesiAsal && typeof petaNilaiAsal[key] !== "undefined" ? petaNilaiAsal[key] : null; // nilai ujian sebelum remedial (kalau sesi ini remedial)
+    var nilaiRemedial = idSesiRemedialTerkait.length > 0 && typeof petaNilaiRemedial[key] !== "undefined" ? petaNilaiRemedial[key] : null; // nilai remedial terbaik (kalau sesi ini punya remedial)
+    if (!h) {
+      return {
+        username: sw.username, nama: sw.nama, kelas: sw.kelas, status: "Belum Mengerjakan",
+        nilaiObjektif: "-", nilaiEssay: "-", nilaiAkhir: "-", idHasil: "",
+        nilaiAsal: nilaiAsal, nilaiRemedial: nilaiRemedial, nilaiRekapFinal: null, sumberNilaiRekap: ""
+      };
+    }
+    var nilaiRekapFinalRaw = h.length > 17 ? h[17] : "";
+    var sumberTersimpan = h.length > 18 && h[18] ? h[18].toString() : "";
+    var nilaiAkhirNum = Number(h[9]) || 0;
+    var nilaiRekapFinal, sumberNilaiRekap;
+    if (sumberTersimpan === "Manual") {
+      // Guru sudah menetapkan nilai manual -> pakai itu apa adanya
+      nilaiRekapFinal = (nilaiRekapFinalRaw !== "" && nilaiRekapFinalRaw !== null) ? Number(nilaiRekapFinalRaw) : nilaiAkhirNum;
+      sumberNilaiRekap = "Manual";
+    } else if (idSesiRemedialTerkait.length > 0) {
+      // Belum ada override manual, tapi sesi ini punya remedial -> hitung otomatis live: MAX(nilai ujian, nilai remedial terbaik)
+      nilaiRekapFinal = (nilaiRemedial !== null && nilaiRemedial > nilaiAkhirNum) ? nilaiRemedial : nilaiAkhirNum;
+      sumberNilaiRekap = "Otomatis-Tertinggi";
+    } else {
+      // Tidak ada remedial sama sekali -> nilai ujian itu sendiri sudah final
+      nilaiRekapFinal = null;
+      sumberNilaiRekap = "";
+    }
     return {
       username: sw.username, nama: sw.nama, kelas: sw.kelas, status: h[10].toString(),
       nilaiObjektif: h[7], nilaiEssay: h[8], nilaiAkhir: h[9],
       waktuMulai: h[11].toString(), waktuSelesai: h[12].toString(), jumlahPelanggaran: h[13], idHasil: h[0].toString(),
-      catatanWaktu: h[14] ? h[14].toString() : ""
+      catatanWaktu: h[14] ? h[14].toString() : "",
+      nilaiAkhirSebelumEdit: h.length > 15 && h[15] !== "" ? h[15] : null,
+      catatanEditNilai: h.length > 16 && h[16] ? h[16].toString() : "",
+      nilaiAsal: nilaiAsal, // nilai ujian sebelum remedial, untuk pembanding kalau sesi ini Remedial
+      nilaiRemedial: nilaiRemedial, // nilai remedial terbaik, untuk pembanding kalau sesi asal ini punya remedial
+      nilaiRekapFinal: nilaiRekapFinal,
+      sumberNilaiRekap: sumberNilaiRekap
     };
   });
   hasil.sort(function(a, b) { return a.nama.localeCompare(b.nama); });
 
-  return { status: "SUCCESS", sesi: sesi, daftarSiswa: hasil, adaSoalEssay: adaSoalEssay, jumlahSoal: sesi.daftarIdSoal.length };
+  return {
+    status: "SUCCESS", sesi: sesi, daftarSiswa: hasil, adaSoalEssay: adaSoalEssay, jumlahSoal: sesi.daftarIdSoal.length,
+    adaSesiRemedial: idSesiRemedialTerkait.length > 0, iniSesiRemedial: !!sesi.idSesiAsal
+  };
 }
 
 /** Detail seluruh jawaban satu siswa untuk satu sesi ujian (dipakai guru untuk koreksi Essay) */
@@ -3605,7 +4317,7 @@ function guruAmbilDetailJawabanSiswa(idHasil) {
     var soal = petaSoal[dataJawaban[i][3].toString()];
     if (!soal) continue;
     hasil.push({
-      idSoal: soal.id, tipe: soal.tipe, pertanyaan: soal.pertanyaan, opsi: soal.opsi, kunci: soal.kunci, poin: soal.poin,
+      idSoal: soal.id, tipe: soal.tipe, pertanyaan: soal.pertanyaan, opsi: soal.opsi, kunci: soal.kunci, poin: soal.poin, gambarUrl: soal.gambarUrl || "",
       jawabanSiswa: dataJawaban[i][4].toString(), benar: dataJawaban[i][5].toString(),
       skorDidapat: Number(dataJawaban[i][6]) || 0, catatanGuru: dataJawaban[i][7] ? dataJawaban[i][7].toString() : ""
     });
@@ -3614,6 +4326,49 @@ function guruAmbilDetailJawabanSiswa(idHasil) {
 }
 
 /** Guru menyimpan nilai Essay (per soal) untuk satu siswa, lalu Nilai Akhir dihitung ulang otomatis */
+/**
+ * Review hasil pengerjaan untuk SISWA sendiri (benar/salah per soal + kunci jawaban).
+ * Hanya diizinkan kalau: (1) idHasil memang milik usernameSiswa yang login, (2) status ujian sudah
+ * final (Selesai/Terkunci), dan (3) guru mengaktifkan "Tampilkan Review" di pengaturan sesi.
+ * Soal Essay tidak ditampilkan status benar/salah (karena sifatnya subjektif), hanya jawaban & skor kalau sudah dikoreksi.
+ */
+function siswaAmbilReviewHasil(idHasil, usernameSiswa) {
+  var sheetHasil = _pastikanSheetHasilUjianBenar();
+  var dataHasil = sheetHasil.getDataRange().getValues();
+  var baris = null;
+  for (var i = 1; i < dataHasil.length; i++) {
+    if (dataHasil[i][0].toString() === idHasil.toString()) { baris = dataHasil[i]; break; }
+  }
+  if (!baris) return { status: "ERROR", message: "Data hasil ujian tidak ditemukan." };
+  if (_normalisasiUsername(baris[2]) !== _normalisasiUsername(usernameSiswa)) return { status: "ERROR", message: "Anda tidak berhak melihat hasil ujian ini." };
+  var status = baris[10].toString();
+  if (status !== "Selesai" && status !== "Terkunci") return { status: "ERROR", message: "Ujian belum selesai dikerjakan." };
+
+  var idSesi = baris[1].toString();
+  var sesi = guruAmbilDetailSesi(idSesi);
+  if (!sesi) return { status: "ERROR", message: "Sesi ujian tidak ditemukan." };
+  if (!sesi.tampilkanReview) return { status: "ERROR", message: "Guru belum mengizinkan siswa melihat review hasil pengerjaan untuk ujian ini." };
+
+  var jawabanDetail = guruAmbilDetailJawabanSiswa(idHasil);
+  var HURUF_LABEL = ["A", "B", "C", "D", "E"];
+  var soalUntukReview = jawabanDetail.map(function(j) {
+    var opsiBerlabel = (j.opsi || []).map(function(teks, idx) { return { label: HURUF_LABEL[idx], teks: teks }; }).filter(function(o) { return o.teks !== ""; });
+    return {
+      tipe: j.tipe, pertanyaan: j.pertanyaan, opsi: opsiBerlabel, gambarUrl: j.gambarUrl,
+      jawabanSiswa: j.jawabanSiswa,
+      kunci: j.tipe === "Essay" ? "" : j.kunci,
+      benar: j.tipe === "Essay" ? null : (j.benar === "TRUE"),
+      poin: j.poin, skorDidapat: j.skorDidapat
+    };
+  });
+
+  return {
+    status: "SUCCESS", judul: sesi.judul, jenis: sesi.jenis, mapel: sesi.mapel,
+    nilaiAkhir: sesi.tampilkanNilai ? baris[9] : null,
+    soal: soalUntukReview
+  };
+}
+
 function guruSimpanKoreksiEssay(idHasil, koreksiArray) {
   var sheetJawaban = _pastikanSheetJawabanSiswaBenar();
   var dataJawaban = sheetJawaban.getDataRange().getValues();
@@ -3662,7 +4417,8 @@ function _siswaAmbilNilaiUjianSaya(usernameSiswa, kelasSiswa) {
   var petaSesi = {};
   for (var s = 1; s < dataSesi.length; s++) {
     if (!dataSesi[s][0]) continue;
-    petaSesi[dataSesi[s][0].toString()] = { judul: dataSesi[s][3].toString(), jenis: dataSesi[s][4].toString(), mapel: dataSesi[s][5].toString() };
+    var sesiBaris = _baris2Sesi(dataSesi[s]);
+    petaSesi[sesiBaris.id] = { judul: sesiBaris.judul, jenis: sesiBaris.jenis, mapel: sesiBaris.mapel, tampilkanNilai: sesiBaris.tampilkanNilai };
   }
 
   var hasil = [];
@@ -3671,8 +4427,338 @@ function _siswaAmbilNilaiUjianSaya(usernameSiswa, kelasSiswa) {
     if (dataHasil[i][2].toString().trim() !== usernameSiswa.toString().trim()) continue;
     var status = dataHasil[i][10].toString();
     if (status !== "Selesai" && status !== "Terkunci") continue;
-    var info = petaSesi[dataHasil[i][1].toString()] || { judul: "Ujian", jenis: "", mapel: "" };
-    hasil.push({ judul: info.judul, jenis: info.jenis, mapel: info.mapel, nilaiAkhir: dataHasil[i][9], status: status });
+    var info = petaSesi[dataHasil[i][1].toString()] || { judul: "Ujian", jenis: "", mapel: "", tampilkanNilai: true };
+    hasil.push({ judul: info.judul, jenis: info.jenis, mapel: info.mapel, nilaiAkhir: info.tampilkanNilai ? dataHasil[i][9] : "-", status: status });
   }
   return hasil;
+}
+
+// ==================================================================================
+// ==================== MODUL GURU WALI (Permendikdasmen No. 11/2025) ====================
+// ==================================================================================
+// Modul baru, terpisah sepenuhnya dari modul lain. Murid direferensikan lewat username
+// (konsisten dengan seluruh aplikasi), BUKAN sheet "Murid" terpisah.
+
+// ---------- SHEET: GuruWali_Penugasan ----------
+var HEADER_GW_PENUGASAN = ["ID Penugasan", "Guru Username", "Guru Nama", "Username Murid", "Nama Murid", "Kelas Saat Assign", "Tahun Ajaran", "Tanggal Mulai", "Tanggal Selesai", "Status"];
+
+function _pastikanSheetGWPenugasanBenar() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("GuruWali_Penugasan");
+  if (!sheet) {
+    sheet = ss.insertSheet("GuruWali_Penugasan");
+    sheet.appendRow(HEADER_GW_PENUGASAN);
+  }
+  return sheet;
+}
+
+/** Tahun ajaran otomatis berdasarkan tanggal saat ini (Juli dianggap awal tahun ajaran baru) */
+function _tahunAjaranSaatIni() {
+  var now = new Date();
+  var tahun = now.getFullYear();
+  var bulan = now.getMonth() + 1; // 1-12
+  return bulan >= 7 ? (tahun + "/" + (tahun + 1)) : ((tahun - 1) + "/" + tahun);
+}
+
+/**
+ * Admin: assign murid ke guru wali. Bisa dipakai utk assign manual (daftar username spesifik)
+ * ATAU assign 1 kelas penuh (kirim daftarUsernameMurid = semua siswa di kelas itu, ambil dulu
+ * dari client lewat adminAmbilSiswaKelasUntukGuruWali). Tidak menduplikasi kalau murid itu
+ * sudah aktif dengan guru wali yang SAMA; tapi kalau sudah aktif dengan guru wali LAIN,
+ * penugasan lama otomatis diakhiri (Dipindahkan) sebelum yang baru dibuat.
+ */
+function adminAssignMuridKeGuruWali(guruUsername, guruNama, daftarMurid) {
+  var sheet = _pastikanSheetGWPenugasanBenar();
+  var data = sheet.getDataRange().getValues();
+  var tahunAjaran = _tahunAjaranSaatIni();
+  var hariIni = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  var jumlahBaru = 0, jumlahDipindah = 0;
+
+  daftarMurid.forEach(function(m) {
+    var sudahAktifDenganGuruSama = false;
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][9].toString() !== "Aktif") continue;
+      if (!_samaUsername(data[i][3], m.username)) continue;
+      if (data[i][1].toString().trim() === guruUsername.toString().trim()) {
+        sudahAktifDenganGuruSama = true;
+      } else {
+        // Murid pindah dari guru wali lain -> akhiri penugasan lama
+        sheet.getRange(i + 1, 9).setNumberFormat("@").setValue(hariIni);
+        sheet.getRange(i + 1, 10).setValue("Dipindahkan");
+        jumlahDipindah++;
+      }
+    }
+    if (!sudahAktifDenganGuruSama) {
+      var idBaru = _buatIdUnik("GWP");
+      sheet.appendRow([idBaru, guruUsername, guruNama, m.username, m.nama, m.kelas || "", tahunAjaran, hariIni, "", "Aktif"]);
+      var br = sheet.getLastRow();
+      sheet.getRange(br, 4).setNumberFormat("@").setValue(m.username); // Kunci Username sbg teks (jaga NISN)
+      sheet.getRange(br, 8).setNumberFormat("@").setValue(hariIni);
+      jumlahBaru++;
+    }
+  });
+
+  catatLogAktivitas(guruNama, "Assign Guru Wali", "Admin menugaskan " + jumlahBaru + " murid baru ke " + guruNama + (jumlahDipindah > 0 ? " (" + jumlahDipindah + " dipindahkan dari guru wali sebelumnya)" : ""));
+  return { status: "SUCCESS", message: jumlahBaru + " murid berhasil ditugaskan ke " + guruNama + "." + (jumlahDipindah > 0 ? " " + jumlahDipindah + " murid dipindahkan dari guru wali sebelumnya." : "") };
+}
+
+/** Admin: akhiri 1 penugasan (murid lulus/pindah/ganti guru wali) — bukan hapus permanen, demi jejak riwayat */
+function adminAkhiriPenugasanGuruWali(idPenugasan, statusBaru) {
+  var sheet = _pastikanSheetGWPenugasanBenar();
+  var data = sheet.getDataRange().getValues();
+  var hariIni = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0].toString() === idPenugasan.toString()) {
+      sheet.getRange(i + 1, 9).setNumberFormat("@").setValue(hariIni);
+      sheet.getRange(i + 1, 10).setValue(statusBaru || "Selesai");
+      return { status: "SUCCESS", message: "Penugasan berhasil diakhiri." };
+    }
+  }
+  return { status: "ERROR", message: "Data penugasan tidak ditemukan." };
+}
+
+/** Admin: rekap semua penugasan guru wali yang sedang aktif, dikelompokkan per guru */
+function adminAmbilRekapGuruWali() {
+  var sheet = _pastikanSheetGWPenugasanBenar();
+  var data = sheet.getDataRange().getValues();
+  var perGuru = {};
+
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][9].toString() !== "Aktif") continue;
+    var guruUsername = data[i][1].toString();
+    if (!perGuru[guruUsername]) perGuru[guruUsername] = { guruUsername: guruUsername, guruNama: data[i][2].toString(), muridList: [] };
+    perGuru[guruUsername].muridList.push({
+      idPenugasan: data[i][0].toString(), username: data[i][3].toString(), nama: data[i][4].toString(),
+      kelas: data[i][5].toString(), tahunAjaran: data[i][6].toString(), tanggalMulai: data[i][7].toString()
+    });
+  }
+
+  var hasil = Object.values(perGuru);
+  hasil.forEach(function(g) { g.muridList.sort(function(a, b) { return a.nama.localeCompare(b.nama); }); });
+  hasil.sort(function(a, b) { return a.guruNama.localeCompare(b.guruNama); });
+  return hasil;
+}
+
+/** Ambil daftar siswa 1 kelas (dipakai admin utk assign per-kelas ke guru wali) */
+function adminAmbilSiswaKelasUntukGuruWali(kelas) {
+  return guruAmbilDaftarSiswaKelas(kelas); // Reuse fungsi yang sudah ada, sudah terurut abjad
+}
+
+/** Guru: daftar murid dampingan aktif miliknya sendiri */
+function guruAmbilMuridDampinganSaya(guruUsername) {
+  var sheet = _pastikanSheetGWPenugasanBenar();
+  var data = sheet.getDataRange().getValues();
+  var hasil = [];
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][1].toString().trim() !== guruUsername.toString().trim()) continue;
+    if (data[i][9].toString() !== "Aktif") continue;
+    hasil.push({
+      idPenugasan: data[i][0].toString(), username: data[i][3].toString(), nama: data[i][4].toString(),
+      kelas: data[i][5].toString(), tahunAjaran: data[i][6].toString(), tanggalMulai: data[i][7].toString()
+    });
+  }
+  hasil.sort(function(a, b) { return a.nama.localeCompare(b.nama); });
+  return hasil;
+}
+
+// ---------- SHEET: GuruWali_Jurnal ----------
+var HEADER_GW_JURNAL = ["ID Jurnal", "Guru Username", "Guru Nama", "Username Murid", "Nama Murid", "Tanggal", "Kategori", "Topik Catatan", "Tindak Lanjut", "Status Tindak Lanjut", "Lampiran Link", "Waktu Dibuat"];
+
+function _pastikanSheetGWJurnalBenar() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("GuruWali_Jurnal");
+  if (!sheet) {
+    sheet = ss.insertSheet("GuruWali_Jurnal");
+    sheet.appendRow(HEADER_GW_JURNAL);
+  }
+  return sheet;
+}
+
+/** Guru: catat sesi pendampingan baru */
+function guruTambahJurnalPendampingan(guruUsername, guruNama, usernameMurid, namaMurid, tanggal, kategori, topikCatatan, tindakLanjut, lampiranLink) {
+  if (!usernameMurid || !tanggal || !kategori || !topikCatatan) {
+    return { status: "ERROR", message: "Murid, tanggal, kategori, dan catatan wajib diisi." };
+  }
+  var sheet = _pastikanSheetGWJurnalBenar();
+  var id = _buatIdUnik("GWJ");
+  var waktu = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+  var statusTindakLanjut = tindakLanjut && tindakLanjut.trim() ? "Belum" : "-";
+
+  sheet.appendRow([id, guruUsername, guruNama, usernameMurid, namaMurid, tanggal, kategori, topikCatatan, tindakLanjut || "", statusTindakLanjut, lampiranLink || "", waktu]);
+  var br = sheet.getLastRow();
+  sheet.getRange(br, 4).setNumberFormat("@").setValue(usernameMurid);
+  sheet.getRange(br, 6).setNumberFormat("@").setValue(tanggal);
+  sheet.getRange(br, 12).setNumberFormat("@").setValue(waktu);
+
+  catatLogAktivitas(guruNama, "Jurnal Pendampingan", "Mencatat sesi " + kategori + " untuk " + namaMurid);
+  return { status: "SUCCESS", message: "Jurnal pendampingan berhasil disimpan." };
+}
+
+function guruUpdateJurnalPendampingan(idJurnal, tanggal, kategori, topikCatatan, tindakLanjut, lampiranLink) {
+  var sheet = _pastikanSheetGWJurnalBenar();
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0].toString() === idJurnal.toString()) {
+      sheet.getRange(i + 1, 6).setNumberFormat("@").setValue(tanggal);
+      sheet.getRange(i + 1, 7).setValue(kategori);
+      sheet.getRange(i + 1, 8).setValue(topikCatatan);
+      sheet.getRange(i + 1, 9).setValue(tindakLanjut || "");
+      sheet.getRange(i + 1, 11).setValue(lampiranLink || "");
+      // Kalau tindak lanjut baru diisi (sebelumnya kosong "-"), set status jadi "Belum"
+      if (tindakLanjut && tindakLanjut.trim() && data[i][9].toString() === "-") {
+        sheet.getRange(i + 1, 10).setValue("Belum");
+      }
+      return { status: "SUCCESS", message: "Jurnal berhasil diperbarui." };
+    }
+  }
+  return { status: "ERROR", message: "Jurnal tidak ditemukan." };
+}
+
+function guruUpdateStatusTindakLanjut(idJurnal, statusBaru) {
+  var sheet = _pastikanSheetGWJurnalBenar();
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0].toString() === idJurnal.toString()) {
+      sheet.getRange(i + 1, 10).setValue(statusBaru);
+      return { status: "SUCCESS", message: "Status tindak lanjut diperbarui menjadi \"" + statusBaru + "\"." };
+    }
+  }
+  return { status: "ERROR", message: "Jurnal tidak ditemukan." };
+}
+
+function guruHapusJurnalPendampingan(idJurnal) {
+  var sheet = _pastikanSheetGWJurnalBenar();
+  var data = sheet.getDataRange().getValues();
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (data[i][0].toString() === idJurnal.toString()) {
+      sheet.deleteRow(i + 1);
+      return { status: "SUCCESS", message: "Jurnal berhasil dihapus." };
+    }
+  }
+  return { status: "ERROR", message: "Jurnal tidak ditemukan." };
+}
+
+/** Semua jurnal milik guru wali ini (utk menu Jurnal Pendampingan, terbaru dulu) */
+function guruAmbilSemuaJurnalSaya(guruUsername) {
+  var sheet = _pastikanSheetGWJurnalBenar();
+  var data = sheet.getDataRange().getValues();
+  var hasil = [];
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][1].toString().trim() !== guruUsername.toString().trim()) continue;
+    hasil.push(_baris2Jurnal(data[i]));
+  }
+  hasil.sort(function(a, b) { return b.tanggal.localeCompare(a.tanggal) || b.waktuDibuat.localeCompare(a.waktuDibuat); });
+  return hasil;
+}
+
+/** Timeline jurnal utk 1 murid spesifik (utk menu Perkembangan Murid), terurut tanggal menaik (kronologis) */
+function guruAmbilJurnalMurid(guruUsername, usernameMurid) {
+  var sheet = _pastikanSheetGWJurnalBenar();
+  var data = sheet.getDataRange().getValues();
+  var hasil = [];
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][1].toString().trim() !== guruUsername.toString().trim()) continue;
+    if (!_samaUsername(data[i][3], usernameMurid)) continue;
+    hasil.push(_baris2Jurnal(data[i]));
+  }
+  hasil.sort(function(a, b) { return a.tanggal.localeCompare(b.tanggal) || a.waktuDibuat.localeCompare(b.waktuDibuat); });
+  return hasil;
+}
+
+function _baris2Jurnal(row) {
+  return {
+    id: row[0].toString(), usernameMurid: row[3].toString(), namaMurid: row[4].toString(),
+    tanggal: row[5].toString(), kategori: row[6].toString(), topikCatatan: row[7].toString(),
+    tindakLanjut: row[8] ? row[8].toString() : "", statusTindakLanjut: row[9] ? row[9].toString() : "-",
+    lampiranLink: row[10] ? row[10].toString() : "", waktuDibuat: row[11] ? row[11].toString() : ""
+  };
+}
+
+// ---------- SHEET: GuruWali_Jadwal ----------
+var HEADER_GW_JADWAL = ["ID Jadwal", "Guru Username", "Guru Nama", "Username Murid", "Nama Murid", "Tanggal Rencana", "Judul", "Status", "ID Jurnal Terkait"];
+
+function _pastikanSheetGWJadwalBenar() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("GuruWali_Jadwal");
+  if (!sheet) {
+    sheet = ss.insertSheet("GuruWali_Jadwal");
+    sheet.appendRow(HEADER_GW_JADWAL);
+  }
+  return sheet;
+}
+
+/** usernameMurid boleh dikosongkan (string kosong) utk sesi kelompok/klasikal */
+function guruTambahJadwalPendampingan(guruUsername, guruNama, usernameMurid, namaMurid, tanggalRencana, judul) {
+  if (!tanggalRencana || !judul) return { status: "ERROR", message: "Tanggal rencana dan judul wajib diisi." };
+  var sheet = _pastikanSheetGWJadwalBenar();
+  var id = _buatIdUnik("GWD");
+  sheet.appendRow([id, guruUsername, guruNama, usernameMurid || "", namaMurid || "(Sesi Kelompok)", tanggalRencana, judul, "Terjadwal", ""]);
+  var br = sheet.getLastRow();
+  if (usernameMurid) sheet.getRange(br, 4).setNumberFormat("@").setValue(usernameMurid);
+  sheet.getRange(br, 6).setNumberFormat("@").setValue(tanggalRencana);
+  return { status: "SUCCESS", message: "Jadwal berhasil ditambahkan." };
+}
+
+function guruUpdateStatusJadwal(idJadwal, statusBaru, idJurnalTerkait) {
+  var sheet = _pastikanSheetGWJadwalBenar();
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0].toString() === idJadwal.toString()) {
+      sheet.getRange(i + 1, 8).setValue(statusBaru);
+      if (idJurnalTerkait) sheet.getRange(i + 1, 9).setValue(idJurnalTerkait);
+      return { status: "SUCCESS", message: "Status jadwal diperbarui." };
+    }
+  }
+  return { status: "ERROR", message: "Jadwal tidak ditemukan." };
+}
+
+function guruHapusJadwalPendampingan(idJadwal) {
+  var sheet = _pastikanSheetGWJadwalBenar();
+  var data = sheet.getDataRange().getValues();
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (data[i][0].toString() === idJadwal.toString()) {
+      sheet.deleteRow(i + 1);
+      return { status: "SUCCESS", message: "Jadwal berhasil dihapus." };
+    }
+  }
+  return { status: "ERROR", message: "Jadwal tidak ditemukan." };
+}
+
+function guruAmbilJadwalSaya(guruUsername) {
+  var sheet = _pastikanSheetGWJadwalBenar();
+  var data = sheet.getDataRange().getValues();
+  var hasil = [];
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][1].toString().trim() !== guruUsername.toString().trim()) continue;
+    hasil.push({
+      id: data[i][0].toString(), usernameMurid: data[i][3].toString(), namaMurid: data[i][4].toString(),
+      tanggalRencana: data[i][5].toString(), judul: data[i][6].toString(),
+      status: data[i][7].toString(), idJurnalTerkait: data[i][8] ? data[i][8].toString() : ""
+    });
+  }
+  hasil.sort(function(a, b) { return a.tanggalRencana.localeCompare(b.tanggalRencana); });
+  return hasil;
+}
+
+// ---------- DASHBOARD ----------
+function guruAmbilDashboardGuruWali(guruUsername) {
+  var muridDampingan = guruAmbilMuridDampinganSaya(guruUsername);
+  var semuaJurnal = guruAmbilSemuaJurnalSaya(guruUsername);
+  var semuaJadwal = guruAmbilJadwalSaya(guruUsername);
+  var hariIni = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  var awalBulanIni = hariIni.substring(0, 7); // "yyyy-MM"
+
+  var sesiBulanIni = semuaJurnal.filter(function(j) { return j.tanggal.substring(0, 7) === awalBulanIni; }).length;
+  var tindakLanjutPending = semuaJurnal.filter(function(j) { return j.statusTindakLanjut === "Belum" || j.statusTindakLanjut === "Proses"; });
+  var jadwalTerlambat = semuaJadwal.filter(function(j) { return j.status === "Terjadwal" && j.tanggalRencana < hariIni; });
+  var jadwalMendatang = semuaJadwal.filter(function(j) { return j.status === "Terjadwal" && j.tanggalRencana >= hariIni; }).slice(0, 5);
+
+  return {
+    jumlahMurid: muridDampingan.length,
+    sesiBulanIni: sesiBulanIni,
+    tindakLanjutPending: tindakLanjutPending.slice(0, 10),
+    jumlahTindakLanjutPending: tindakLanjutPending.length,
+    jadwalTerlambat: jadwalTerlambat,
+    jadwalMendatang: jadwalMendatang
+  };
 }
